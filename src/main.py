@@ -39,7 +39,7 @@ from aquarium_boids.markov import LAYERS, SECTIONS, SymbolicGenerator
 from aquarium_boids.midi_in import MidiControllerInput
 from aquarium_boids.osc_io import OscSender
 from aquarium_boids.render import ClassicRenderer, Display, ThermalRenderer
-from aquarium_boids.sources import SimulationSource
+from aquarium_boids.sources import ReplaySource, SimulationSource
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -64,7 +64,9 @@ def append_log(path: Path, now: float, descriptors: dict[str, float], controls: 
         ])
 
 
-def handle_key(event: pygame.event.Event, controls: RuntimeControls, source: SimulationSource) -> None:
+def handle_key(
+    event: pygame.event.Event, controls: RuntimeControls, source: SimulationSource | ReplaySource
+) -> None:
     step = 0.05
     if event.key == pygame.K_ESCAPE:
         pygame.quit()
@@ -127,7 +129,61 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"window size, e.g. 1920x1080 (default {WIDTH}x{HEIGHT}); the simulation stays {WIDTH}x{HEIGHT}",
     )
     parser.add_argument("--fullscreen", action="store_true", help="start fullscreen (F11 toggles)")
+    replay = parser.add_argument_group(
+        "replay", "move the fish along recorded trajectories (CSV: id,frame,x,y[,t]); no MIDI in this mode"
+    )
+    replay.add_argument("--replay", metavar="FILE", help="trajectory CSV to replay instead of the boid simulation")
+    replay.add_argument(
+        "--replay-fps", type=positive_float, default=2.5, metavar="F",
+        help="data rows per second when the CSV has no t column (default 2.5)",
+    )
+    replay.add_argument(
+        "--replay-speed", type=positive_float, default=1.0, metavar="S", help="playback speed, 1 = real time (default 1)"
+    )
+    replay.add_argument("--replay-loop", action="store_true", help="start again at the end of the data")
+    replay.add_argument("--replay-flip-y", action="store_true", help="data y points up (pygame's y points down)")
+    replay.add_argument(
+        "--replay-max-agents", type=positive_int, default=BOID_COUNT, metavar="N",
+        help=f"most agents on screen at once (default {BOID_COUNT})",
+    )
     return parser.parse_args(argv)
+
+
+def positive_float(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a number, got {text!r}")
+    if not (value > 0 and value != float("inf")):
+        raise argparse.ArgumentTypeError(f"must be a finite number > 0, got {text}")
+    return value
+
+
+def positive_int(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected an integer, got {text!r}")
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be >= 1, got {text}")
+    return value
+
+
+def load_replay(args: argparse.Namespace) -> ReplaySource:
+    """Load --replay before any window opens; a bad file exits with its message."""
+    try:
+        source = ReplaySource(
+            args.replay,
+            fps=args.replay_fps,
+            speed=args.replay_speed,
+            loop=args.replay_loop,
+            flip_y=args.replay_flip_y,
+            max_agents=args.replay_max_agents,
+        )
+    except (OSError, ValueError) as exc:
+        sys.exit(f"--replay: {exc}")
+    print(f"[replay] {source.summary}")
+    return source
 
 
 def parse_size(text: str) -> tuple[int, int]:
@@ -142,6 +198,7 @@ def parse_size(text: str) -> tuple[int, int]:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    replay = load_replay(args) if args.replay else None
     pygame.init()
     display = Display((WIDTH, HEIGHT), args.size, "SynthFish - boids -> OSC -> Max", fullscreen=args.fullscreen)
     clock = pygame.time.Clock()
@@ -159,7 +216,7 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     controls = RuntimeControls()
-    source = SimulationSource(BOID_COUNT)
+    source = replay if replay is not None else SimulationSource(BOID_COUNT)
     smoother = OnePoleSmoother(alpha=0.16)
     osc = OscSender(OSC_HOST, OSC_PORT)
     generator = SymbolicGenerator()
@@ -175,9 +232,12 @@ def main(argv: list[str] | None = None) -> None:
         joy_dead_zone=JOY_DEAD_ZONE,
         joy_invert_y=JOY_INVERT_Y,
     )
-    if ENABLE_MIDI_INPUT:
+    if ENABLE_MIDI_INPUT and replay is None:
         midi_input.start()
-    print(f"[midi] active profile: {midi_input.profile_name if ENABLE_MIDI_INPUT else 'none (MIDI disabled in config)'}")
+    if replay is not None:
+        print("[midi] off in replay mode")
+    else:
+        print(f"[midi] active profile: {midi_input.profile_name if ENABLE_MIDI_INPUT else 'none (MIDI disabled in config)'}")
 
     log_path = BASE_DIR / "logs" / f"descriptors_{int(time.time())}.csv"
     write_log_header(log_path)
