@@ -152,6 +152,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--replay-max-agents", type=positive_int, default=BOID_COUNT, metavar="N",
         help=f"most agents on screen at once (default {BOID_COUNT})",
     )
+    replay.add_argument(
+        "--replay-normalise", action="store_true",
+        help="map each descriptor to this file's p5..p95 range (fish_count: / most agents on screen)",
+    )
     return parser.parse_args(argv)
 
 
@@ -186,6 +190,7 @@ def load_replay(args: argparse.Namespace) -> ReplaySource:
             loop=args.replay_loop,
             flip_y=args.replay_flip_y,
             max_agents=args.replay_max_agents,
+            normalise=args.replay_normalise,
         )
     except (OSError, ValueError) as exc:
         sys.exit(f"--replay: {exc}")
@@ -350,7 +355,7 @@ def main(argv: list[str] | None = None) -> None:
 
         flock = source.step(dt, controls, attractor, repeller)
 
-        descriptors = smoother.process(compute_descriptors(flock, WIDTH, HEIGHT))
+        descriptors = smoother.process(source.normalise(compute_descriptors(flock, WIDTH, HEIGHT)))
 
         if now - last_descriptor_send >= 1.0 / SEND_DESCRIPTOR_HZ:
             osc.send_descriptors(descriptors)

@@ -93,7 +93,8 @@ class Motion(unittest.TestCase):
         self.src.step(1.0, self.c, None, None)
         self.assertAlmostEqual(a.position.x - x0, a.velocity.x, places=6)
         self.assertAlmostEqual(a.acceleration.x, 0.0, places=9)
-        self.assertAlmostEqual(a.max_speed, 4.0)  # Boid default until calibration
+        self.assertEqual(a.max_speed, self.src.calibration.max_speed)  # calibrated, not the Boid default
+        self.assertNotEqual(a.max_speed, 4.0)
 
     def test_speed_factor(self):
         fast = ReplaySource(csv_file(walker("a", 0, 20, 0.0) + [("pin", 0, 0.0, 10.0), ("pin", 20, 20.0, 10.0)]),

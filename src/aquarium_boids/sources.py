@@ -1,7 +1,7 @@
 """Where the fish come from: a source owns the agent list and moves it one frame at a time.
 
-main.py only calls `reset` and `step`, then hands `agents` to the descriptors, OSC and the
-renderer. SimulationSource is the boid simulation, the code that used to run inline in main.py.
+main.py only calls `reset`, `step` and `normalise`, then hands `agents` to the descriptors, OSC
+and the renderer. SimulationSource is the boid simulation, the code that used to run inline in main.py.
 ReplaySource moves the same Boid objects along recorded trajectories (--replay FILE).
 """
 from __future__ import annotations
@@ -14,6 +14,7 @@ from pygame.math import Vector2
 from .boids import Boid
 from .config import BOID_COUNT, HEIGHT, WIDTH
 from .controls import RuntimeControls
+from .replay.calibrate import Normaliser, calibrate_descriptors, calibrate_speed_force
 from .replay.interp import DataClock, Piece, Trajectories, per_frame
 from .replay.loader import data_bounds, fit_to_world, load_trajectories, to_world
 
@@ -66,13 +67,21 @@ class SimulationSource:
                 boid.update(dt_scale=dt)
         return flock
 
+    def normalise(self, descriptors: dict[str, float]) -> dict[str, float]:
+        """The simulation's descriptors are already on their own scale: returned as they are."""
+        return descriptors
+
 
 class ReplaySource:
     """Recorded trajectories instead of the boid rules: one Boid per track piece, never flocked.
 
     - Data time advances with dt (frames) x speed; SPACE pauses it, R restarts the file.
     - Position, velocity and acceleration come from the spline (replay/interp.py), in px per
-      60 fps frame like the boids. max_speed / max_force stay at the Boid defaults.
+      60 fps frame like the boids.
+    - Calibration at load: every agent's max_speed = p95 |v| and max_force = p95 |a| / 6 of the
+      file at this speed, so mean_speed and energy mean "fast / agitated for this dataset".
+    - normalise=True (--replay-normalise): descriptors are mapped to the file's p5..p95 range
+      before the smoother; fish_count = agents / most agents ever on screen.
     - Stable slots: an agent keeps its list index while its piece lasts, so /gran/fish_x voice i
       stays the same fish. When one leaves, the last agent takes its index (one voice changes
       instead of every voice above it); a newcomer is appended, up to max_agents.
@@ -92,6 +101,7 @@ class ReplaySource:
         loop: bool = False,
         flip_y: bool = False,
         max_agents: int = BOID_COUNT,
+        normalise: bool = False,
         world: tuple[float, float] = (WIDTH, HEIGHT),
     ) -> None:
         if max_agents < 1:
@@ -102,6 +112,10 @@ class ReplaySource:
         self.clock = DataClock(self.trajectories.t_start, self.trajectories.t_end, speed=speed, loop=loop)
         self.speed = speed
         self.max_agents = max_agents
+        self.calibration = calibrate_speed_force(self.trajectories, speed, max_agents)
+        self.normaliser: Normaliser | None = (
+            calibrate_descriptors(self.trajectories, speed, max_agents, self.calibration, world) if normalise else None
+        )
         self.agents: list[Boid] = []
         self._pieces: list[Piece] = []  # parallel to agents
         self.peak_waiting = 0  # most pieces kept off screen at once by max_agents
@@ -111,7 +125,9 @@ class ReplaySource:
             f"({self.trajectories.dropped} single rows dropped), {dataset.duration:.1f} s of data, "
             f"frame step {dataset.frame_step}, up to {dataset.max_population} at once, "
             f"scale {transform.scale:.2f} px/unit, speed x{speed:g}, loop {'on' if loop else 'off'}, "
-            f"cap {max_agents}"
+            f"cap {max_agents}; max_speed {self.calibration.max_speed:.3f} px/frame, "
+            f"max_force {self.calibration.max_force:.5f} px/frame^2 (p95 of {self.calibration.samples} samples), "
+            f"normalise {'on' if normalise else 'off'}"
         )
         self._sync(self.clock.t)
 
@@ -141,6 +157,12 @@ class ReplaySource:
         controls.population = len(self.agents)
         return self.agents
 
+    def normalise(self, descriptors: dict[str, float]) -> dict[str, float]:
+        """With --replay-normalise: the file's p5..p95 -> 0..1 (before the smoother); else unchanged."""
+        if self.normaliser is None:
+            return descriptors
+        return self.normaliser(descriptors, len(self.agents))
+
     def _sync(self, t: float) -> None:
         active = self.trajectories.active(t)
         keys = {(p.track_id, p.index) for p in active}
@@ -161,7 +183,7 @@ class ReplaySource:
             if len(self.agents) >= self.max_agents:
                 waiting += 1
                 continue
-            self.agents.append(replay_agent(piece))
+            self.agents.append(replay_agent(piece, self.calibration.max_speed, self.calibration.max_force))
             self._pieces.append(piece)
         self.peak_waiting = max(self.peak_waiting, waiting)
         for boid, piece in zip(self.agents, self._pieces):
@@ -171,7 +193,7 @@ class ReplaySource:
             boid.acceleration.update(state.ax, state.ay)
 
 
-def replay_agent(piece: Piece) -> Boid:
+def replay_agent(piece: Piece, max_speed: float = 4.0, max_force: float = 0.055) -> Boid:
     """A Boid for one track piece; size and colour from a hash of the id, no random draws."""
     h = zlib.crc32(piece.track_id.encode("utf-8"))
     return Boid(
@@ -181,4 +203,6 @@ def replay_agent(piece: Piece) -> Boid:
         acceleration=Vector2(0, 0),
         size=6.0 + 5.0 * (h % 1000) / 999.0,
         color=REPLAY_COLORS[(h >> 10) % len(REPLAY_COLORS)],
+        max_speed=max_speed,
+        max_force=max_force,
     )
