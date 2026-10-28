@@ -10,7 +10,6 @@ from pathlib import Path
 import pygame
 from pygame.math import Vector2
 
-from aquarium_boids.boids import Boid
 from aquarium_boids.config import (
     BOID_COUNT,
     BPM,
@@ -40,28 +39,10 @@ from aquarium_boids.markov import LAYERS, SECTIONS, SymbolicGenerator
 from aquarium_boids.midi_in import MidiControllerInput
 from aquarium_boids.osc_io import OscSender
 from aquarium_boids.render import ClassicRenderer, Display, ThermalRenderer
+from aquarium_boids.sources import SimulationSource
 
 
 BASE_DIR = Path(__file__).resolve().parent
-
-
-def create_flock(count: int) -> list[Boid]:
-    return [Boid.create(i, WIDTH, HEIGHT) for i in range(count)]
-
-
-def resize_flock(flock: list[Boid], target: int) -> list[Boid]:
-    """Grow or shrink the flock in place to `target` fish (1..BOID_COUNT).
-
-    Lets the number of fish be a live control (keyboard -/= or MIDIMIX fader),
-    so fish_count -> granular density/probability actually varies.
-    """
-    target = max(1, min(BOID_COUNT, int(target)))
-    if len(flock) > target:
-        del flock[target:]
-    elif len(flock) < target:
-        for i in range(len(flock), target):
-            flock.append(Boid.create(i, WIDTH, HEIGHT))
-    return flock
 
 
 def write_log_header(path: Path) -> None:
@@ -83,7 +64,7 @@ def append_log(path: Path, now: float, descriptors: dict[str, float], controls: 
         ])
 
 
-def handle_key(event: pygame.event.Event, controls: RuntimeControls, flock: list[Boid]) -> list[Boid]:
+def handle_key(event: pygame.event.Event, controls: RuntimeControls, source: SimulationSource) -> None:
     step = 0.05
     if event.key == pygame.K_ESCAPE:
         pygame.quit()
@@ -115,10 +96,9 @@ def handle_key(event: pygame.event.Event, controls: RuntimeControls, flock: list
     elif event.key == pygame.K_EQUALS:
         controls.population = min(BOID_COUNT, controls.population + 5)
     elif event.key == pygame.K_r:
-        return create_flock(controls.population)
+        source.reset(controls.population)
     elif pygame.K_1 <= event.key <= pygame.K_6:
         controls.section_id = event.key - pygame.K_1
-    return flock
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -179,7 +159,7 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     controls = RuntimeControls()
-    flock = create_flock(BOID_COUNT)
+    source = SimulationSource(BOID_COUNT)
     smoother = OnePoleSmoother(alpha=0.16)
     osc = OscSender(OSC_HOST, OSC_PORT)
     generator = SymbolicGenerator()
@@ -263,7 +243,7 @@ def main(argv: list[str] | None = None) -> None:
                     continue
                 if renderer.handle_key(event.key):
                     continue
-                flock = handle_key(event, controls, flock)
+                handle_key(event, controls, source)
 
         mouse_buttons = pygame.mouse.get_pressed(num_buttons=3)
         mouse_pos = display.view.to_world(pygame.mouse.get_pos())
@@ -301,13 +281,7 @@ def main(argv: list[str] | None = None) -> None:
                 osc.send_fx_predator_strength(controls)  # so Max has the strength before the first kick
             osc.send_fx_predator(predator_active)
 
-        flock = resize_flock(flock, controls.population)
-
-        if not controls.paused:
-            for boid in flock:
-                boid.flock(flock, controls, WIDTH, HEIGHT, attractor=attractor, repeller=repeller)
-            for boid in flock:
-                boid.update(dt_scale=dt)
+        flock = source.step(dt, controls, attractor, repeller)
 
         descriptors = smoother.process(compute_descriptors(flock, WIDTH, HEIGHT))
 
