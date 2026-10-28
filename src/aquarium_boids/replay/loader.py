@@ -1,5 +1,6 @@
-"""Load a trajectory CSV and fit it into the simulation world. Pure functions, no pygame.
+"""Load a trajectory file and fit it into the simulation world. Pure functions, no pygame.
 
+Formats: CSV (below) or the ETH/UCY text files of Social GAN / Trajectron++ (`load_eth_ucy`).
 CSV: a header row with at least `id, frame, x, y` (any order, any case, extra columns ignored).
 An optional `t` column (seconds) gives the time of each row. Without it, time comes from the
 frame number: `fps` is data rows per second, and the frame numbers may advance in steps
@@ -97,15 +98,23 @@ def _finite(text: str | None, name: str) -> float:
     return value
 
 
+FORMATS = ("auto", "csv", "eth-ucy")
+
+def load_trajectories(path: str | Path, fmt: str = "auto", fps: float = 2.5, frame_step: int | None = None) -> Dataset:
+    """Load any supported file. fmt "auto": `.txt` = eth-ucy, anything else = csv."""
+    if fmt not in FORMATS:
+        raise ValueError(f"unknown format {fmt!r} (expected one of {', '.join(FORMATS)})")
+    if fmt == "auto":
+        fmt = "eth-ucy" if Path(path).suffix.lower() == ".txt" else "csv"
+    return load_eth_ucy(path, fps, frame_step) if fmt == "eth-ucy" else load_csv(path, fps, frame_step)
+
+
 def load_csv(path: str | Path, fps: float = 2.5, frame_step: int | None = None) -> Dataset:
     """Read a trajectory CSV. Raises ValueError (with the line number) on bad input.
 
     frame_step: None = detect it from the frame numbers; ignored for time when a t column exists.
     """
-    if fps <= 0:
-        raise ValueError(f"fps must be > 0, got {fps}")
-    if frame_step is not None and frame_step < 1:
-        raise ValueError(f"frame_step must be >= 1, got {frame_step}")
+    _check_rate(fps, frame_step)
     path = Path(path)
     with path.open(newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
@@ -115,28 +124,73 @@ def load_csv(path: str | Path, fps: float = 2.5, frame_step: int | None = None) 
             raise ValueError(f"{path.name}: missing column(s) {', '.join(missing)} (header: {header})")
         reader.fieldnames = header
         has_t = "t" in header
-        raw: dict[str, dict[int, tuple[float | None, float, float, int]]] = {}
-        for row in reader:
-            line = reader.line_num
-            if not any(isinstance(v, str) and v.strip() for v in row.values()):
-                continue  # blank line
-            try:
-                track_id = row["id"].strip()
-                frame_f = _finite(row["frame"], "frame")
-                if not frame_f.is_integer():
-                    raise ValueError(f"frame {frame_f} is not an integer")
-                frame = int(frame_f)
-                x = _finite(row["x"], "x")
-                y = _finite(row["y"], "y")
-                t = _finite(row["t"], "t") if has_t else None
-            except (TypeError, ValueError, AttributeError) as exc:
-                raise ValueError(f"{path.name}:{line}: bad value ({exc})") from None
-            if not track_id:
-                raise ValueError(f"{path.name}:{line}: empty id")
-            frames = raw.setdefault(track_id, {})
-            if frame in frames:
-                raise ValueError(f"{path.name}:{line}: id {track_id!r} appears twice in frame {frame}")
-            frames[frame] = (t, x, y, line)
+
+        def rows():
+            for row in reader:
+                if not any(isinstance(v, str) and v.strip() for v in row.values()):
+                    continue  # blank line
+                track_id = row["id"].strip() if isinstance(row["id"], str) else ""
+                yield (reader.line_num, track_id, row["frame"], row["x"], row["y"], row["t"] if has_t else None)
+
+        return _build(path, rows(), fps, frame_step)
+
+
+def load_eth_ucy(path: str | Path, fps: float = 2.5, frame_step: int | None = None) -> Dataset:
+    """Read an ETH/UCY file as distributed with Social GAN / Trajectron++ (experiments/pedestrians/raw).
+
+    No header; one row per line, `frame id x y` separated by tabs or spaces; x, y in metres.
+    Ids written as floats ("1.0") become "1".
+    """
+    _check_rate(fps, frame_step)
+    path = Path(path)
+    with path.open(encoding="utf-8-sig") as f:
+
+        def rows():
+            for line_no, text in enumerate(f, start=1):
+                parts = text.split()
+                if not parts:
+                    continue
+                if len(parts) != 4:
+                    raise ValueError(f"{path.name}:{line_no}: expected 4 fields (frame id x y), got {len(parts)}")
+                frame, track_id, x, y = parts
+                try:
+                    as_float = float(track_id)
+                    if as_float.is_integer():
+                        track_id = str(int(as_float))
+                except ValueError:
+                    pass
+                yield (line_no, track_id, frame, x, y, None)
+
+        return _build(path, rows(), fps, frame_step)
+
+
+def _check_rate(fps: float, frame_step: int | None) -> None:
+    if fps <= 0:
+        raise ValueError(f"fps must be > 0, got {fps}")
+    if frame_step is not None and frame_step < 1:
+        raise ValueError(f"frame_step must be >= 1, got {frame_step}")
+
+
+def _build(path: Path, rows, fps: float, frame_step: int | None) -> Dataset:
+    """Validate rows (line, id, frame, x, y, t-or-None) and turn them into time-sorted tracks."""
+    raw: dict[str, dict[int, tuple[float | None, float, float, int]]] = {}
+    for line, track_id, frame_text, x_text, y_text, t_text in rows:
+        try:
+            frame_f = _finite(frame_text, "frame")
+            if not frame_f.is_integer():
+                raise ValueError(f"frame {frame_f} is not an integer")
+            frame = int(frame_f)
+            x = _finite(x_text, "x")
+            y = _finite(y_text, "y")
+            t = _finite(t_text, "t") if t_text is not None else None
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise ValueError(f"{path.name}:{line}: bad value ({exc})") from None
+        if not track_id:
+            raise ValueError(f"{path.name}:{line}: empty id")
+        frames = raw.setdefault(track_id, {})
+        if frame in frames:
+            raise ValueError(f"{path.name}:{line}: id {track_id!r} appears twice in frame {frame}")
+        frames[frame] = (t, x, y, line)
     if not raw:
         raise ValueError(f"{path.name}: no data rows")
 

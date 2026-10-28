@@ -39,6 +39,7 @@ from aquarium_boids.markov import LAYERS, SECTIONS, SymbolicGenerator
 from aquarium_boids.midi_in import MidiControllerInput
 from aquarium_boids.osc_io import OscSender
 from aquarium_boids.render import ClassicRenderer, Display, ThermalRenderer
+from aquarium_boids.replay.loader import FORMATS as REPLAY_FORMATS
 from aquarium_boids.sources import ReplaySource, SimulationSource
 
 
@@ -130,9 +131,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--fullscreen", action="store_true", help="start fullscreen (F11 toggles)")
     replay = parser.add_argument_group(
-        "replay", "move the fish along recorded trajectories (CSV: id,frame,x,y[,t]); no MIDI in this mode"
+        "replay",
+        "move the fish along recorded trajectories (CSV id,frame,x,y[,t] or ETH/UCY .txt); no MIDI in this mode",
     )
-    replay.add_argument("--replay", metavar="FILE", help="trajectory CSV to replay instead of the boid simulation")
+    replay.add_argument("--replay", metavar="FILE", help="trajectory file to replay instead of the boid simulation")
+    replay.add_argument(
+        "--replay-format", choices=REPLAY_FORMATS, default="auto",
+        help="file format; auto (default) = eth-ucy for .txt (frame id x y, no header), csv otherwise",
+    )
     replay.add_argument(
         "--replay-fps", type=positive_float, default=2.5, metavar="F",
         help="data rows per second when the CSV has no t column (default 2.5)",
@@ -174,6 +180,7 @@ def load_replay(args: argparse.Namespace) -> ReplaySource:
     try:
         source = ReplaySource(
             args.replay,
+            fmt=args.replay_format,
             fps=args.replay_fps,
             speed=args.replay_speed,
             loop=args.replay_loop,

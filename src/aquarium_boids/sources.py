@@ -15,7 +15,7 @@ from .boids import Boid
 from .config import BOID_COUNT, HEIGHT, WIDTH
 from .controls import RuntimeControls
 from .replay.interp import DataClock, Piece, Trajectories, per_frame
-from .replay.loader import data_bounds, fit_to_world, load_csv, to_world
+from .replay.loader import data_bounds, fit_to_world, load_trajectories, to_world
 
 REPLAY_MARGIN = 60.0  # world px kept free around the data (same as the joystick margin)
 REPLAY_COLORS = [(80, 210, 255), (105, 255, 190), (255, 190, 95), (220, 160, 255)]  # Boid.create's palette
@@ -86,6 +86,7 @@ class ReplaySource:
     def __init__(
         self,
         path: str | Path,
+        fmt: str = "auto",
         fps: float = 2.5,
         speed: float = 1.0,
         loop: bool = False,
@@ -95,7 +96,7 @@ class ReplaySource:
     ) -> None:
         if max_agents < 1:
             raise ValueError(f"max agents must be >= 1, got {max_agents}")
-        dataset = load_csv(path, fps=fps)
+        dataset = load_trajectories(path, fmt=fmt, fps=fps)
         transform = fit_to_world(data_bounds(dataset), world, REPLAY_MARGIN, flip_y=flip_y)
         self.trajectories = Trajectories(to_world(dataset, transform))
         self.clock = DataClock(self.trajectories.t_start, self.trajectories.t_end, speed=speed, loop=loop)

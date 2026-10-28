@@ -12,7 +12,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from aquarium_boids.replay.loader import Bounds, data_bounds, fit_to_world, load_csv, to_world  # noqa: E402
+from aquarium_boids.replay.loader import (  # noqa: E402
+    Bounds, data_bounds, fit_to_world, load_csv, load_eth_ucy, load_trajectories, to_world,
+)
 
 
 _TEMP_FILES: list[Path] = []
@@ -115,6 +117,54 @@ class LoadCsv(unittest.TestCase):
     def test_tracks_ordered_by_first_time_then_numeric_id(self):
         ds = load_csv(write_csv("id,frame,x,y\n10,0,0,0\nb,1,0,0\n2,0,0,0\na,1,0,0\n"))
         self.assertEqual(list(ds.tracks), ["2", "10", "a", "b"])
+
+
+def write_bytes(data: bytes, suffix: str) -> Path:
+    f = tempfile.NamedTemporaryFile("wb", suffix=suffix, delete=False)
+    f.write(data)
+    f.close()
+    _TEMP_FILES.append(Path(f.name))
+    return Path(f.name)
+
+
+# Real layout of experiments/pedestrians/raw (Trajectron++ / Social GAN): tab-separated, CRLF,
+# no header, `frame id x y`, frames and ids written as floats in some scenes.
+ETH_UCY = (b"0.0\t1.0\t13.4487205051\t3.93788669527\r\n0.0\t2.0\t13.34\t4.43\r\n"
+           b"10.0\t1.0\t13.0\t3.9\r\n10.0\t2.0\t13.1\t4.4\r\n20.0\t1.0\t12.6\t3.85\r\n")
+
+
+class LoadEthUcy(unittest.TestCase):
+    def test_real_layout(self):
+        ds = load_eth_ucy(write_bytes(ETH_UCY, ".txt"), fps=2.5)
+        self.assertEqual(list(ds.tracks), ["1", "2"])  # "1.0" -> "1"
+        self.assertEqual(ds.frame_step, 10)
+        a = ds.tracks["1"]
+        self.assertEqual([s.frame for s in a], [0, 10, 20])
+        self.assertAlmostEqual(a[1].t - a[0].t, 0.4)
+        self.assertEqual((a[0].x, a[0].y), (13.4487205051, 3.93788669527))
+
+    def test_spaces_int_frames_and_blank_lines(self):
+        ds = load_eth_ucy(write_bytes(b"780 1 8.46 3.59\n\n790  1  9.57 3.79\n", ".txt"))
+        self.assertEqual([s.frame for s in ds.tracks["1"]], [780, 790])
+
+    def test_wrong_field_count_reports_line(self):
+        with self.assertRaisesRegex(ValueError, r":2: expected 4 fields"):
+            load_eth_ucy(write_bytes(b"0\t1\t2\t3\n10\t1\t2\n", ".txt"))
+
+    def test_bad_value_and_duplicate(self):
+        with self.assertRaisesRegex(ValueError, r":1: bad value"):
+            load_eth_ucy(write_bytes(b"0\t1\tnan\t3\n", ".txt"))
+        with self.assertRaisesRegex(ValueError, "twice in frame 0"):
+            load_eth_ucy(write_bytes(b"0\t1\t0\t0\n0\t1.0\t1\t1\n", ".txt"))
+
+    def test_auto_format_by_extension(self):
+        self.assertEqual(load_trajectories(write_bytes(ETH_UCY, ".txt")).frame_step, 10)
+        self.assertEqual(list(load_trajectories(write_csv("id,frame,x,y\nq,0,0,0\n")).tracks), ["q"])
+        self.assertEqual(load_trajectories(write_bytes(ETH_UCY, ".dat"), fmt="eth-ucy").frame_step, 10)
+        with self.assertRaisesRegex(ValueError, "unknown format"):
+            load_trajectories(write_bytes(ETH_UCY, ".txt"), fmt="xml")
+        with self.assertRaisesRegex(ValueError, "missing column"):  # a .txt forced to csv
+            load_trajectories(write_bytes(ETH_UCY, ".txt"), fmt="csv")
 
 
 class FitToWorld(unittest.TestCase):
