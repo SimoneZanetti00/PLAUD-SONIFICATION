@@ -12,7 +12,7 @@ from pathlib import Path
 from pygame.math import Vector2
 
 from .boids import Boid
-from .config import BOID_COUNT, HEIGHT, WIDTH
+from .config import BOID_COUNT, CONTROL_PORT, HEIGHT, OSC_HOST, OSC_PORT, PLAIN_UDP_PORT, WIDTH
 from .controls import RuntimeControls
 from .replay.calibrate import Normaliser, calibrate_descriptors, calibrate_speed_force
 from .replay.interp import DataClock, Piece, Trajectories, per_frame
@@ -33,12 +33,18 @@ ETH_UCY_SCENES = {
 }
 
 
-def scene_title(path: str | Path, fmt: str) -> str:
-    """Window title for a replay, e.g. "PLAUD-SONIFICATION - zara1 - real trajectories (ETH/UCY)"."""
+def scene_name(path: str | Path, fmt: str) -> tuple[str, str]:
+    """(scene, source label), e.g. ("zara1", "ETH/UCY") or ("walk", "CSV")."""
     stem = Path(path).stem
     if resolve_format(path, fmt) == "eth-ucy":
-        return f"PLAUD-SONIFICATION - {ETH_UCY_SCENES.get(stem, stem)} - real trajectories (ETH/UCY)"
-    return f"PLAUD-SONIFICATION - {stem} - real trajectories (CSV)"
+        return ETH_UCY_SCENES.get(stem, stem), "ETH/UCY"
+    return stem, "CSV"
+
+
+def scene_title(path: str | Path, fmt: str) -> str:
+    """Window title for a replay, e.g. "PLAUD-SONIFICATION - zara1 - real trajectories (ETH/UCY)"."""
+    scene, label = scene_name(path, fmt)
+    return f"PLAUD-SONIFICATION - {scene} - real trajectories ({label})"
 
 
 def mmss(seconds: float) -> str:
@@ -137,6 +143,9 @@ class ReplaySource:
         self.speed = speed
         self.max_agents = max_agents
         self.title = scene_title(path, fmt)
+        self.scene, self.source_label = scene_name(path, fmt)
+        self.loop = loop
+        self.max_population = dataset.max_population
         self.calibration = calibrate_speed_force(self.trajectories, speed, max_agents)
         self.normaliser: Normaliser | None = (
             calibrate_descriptors(self.trajectories, speed, max_agents, self.calibration, world) if normalise else None
@@ -185,6 +194,23 @@ class ReplaySource:
     def caption(self) -> str:
         """Title plus data time since the start of the file, e.g. "... (ETH/UCY)   01:23 / 06:00"."""
         return f"{self.title}   {mmss(self.clock.t - self.clock.start)} / {mmss(self.clock.end - self.clock.start)}"
+
+    def hud_lines(self, controls: RuntimeControls, descriptors: dict[str, float]) -> list[str]:
+        """HUD text for replay mode (classic look, thermal data mode): no boid weights, no MIDI."""
+        d = descriptors.get
+        state = "end of data" if self.clock.finished else ("paused" if controls.paused else "playing")
+        return [
+            f"PLAUD-SONIFICATION | {self.scene} | real trajectories ({self.source_label}) -> OSC -> Max",
+            f"data time {mmss(self.clock.t - self.clock.start)} / {mmss(self.clock.end - self.clock.start)} | "
+            f"{state} | speed x{self.speed:g} | loop {'on' if self.loop else 'off'} | SPACE pause | R restart",
+            f"people on screen {len(self.agents)} (most at once in the file {self.max_population}) | "
+            f"fish_count {d('fish_count', 0):.2f}{' (normalised)' if self.normaliser is not None else ''}",
+            f"density_fader UP/DOWN: {controls.density_fader:.2f} | section 1-6: {controls.section_name}",
+            f"predator_amount {controls.predator_amount:.2f} (UDP) | mouse right = predator rings, no force on the data",
+            f"OSC out: {OSC_HOST}:{OSC_PORT} | plain out: {PLAIN_UDP_PORT} | control in: {CONTROL_PORT}",
+            f"mean_speed {d('mean_speed', 0):.2f} | energy {d('energy', 0):.2f} | density {d('density', 0):.2f} | "
+            f"spread {d('spread', 0):.2f} | coherence {d('direction_coherence', 0):.2f}",
+        ]
 
     def normalise(self, descriptors: dict[str, float]) -> dict[str, float]:
         """With --replay-normalise: the file's p5..p95 -> 0..1 (before the smoother); else unchanged."""

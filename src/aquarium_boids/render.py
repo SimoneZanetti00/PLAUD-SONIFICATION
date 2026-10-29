@@ -20,6 +20,9 @@ from .boids import Boid
 from .config import BACKGROUND, CONTROL_PORT, OSC_HOST, OSC_PORT, TEXT
 from .controls import RuntimeControls
 
+# Replay mode: a callback (controls, descriptors) -> HUD lines that replaces the simulation's text.
+HudLines = Callable[[RuntimeControls, dict[str, float]], list[str]]
+
 # Optional per-stage timing: an external profiler may set this to a dict; stays None otherwise.
 STAGE_ACC: dict[str, float] | None = None
 
@@ -121,8 +124,10 @@ def draw_hud(
     controls: RuntimeControls,
     descriptors: dict[str, float],
     origin: tuple[int, int] = (0, 0),
+    lines: list[str] | None = None,
 ) -> None:
-    lines = [
+    """Text HUD; `lines` replaces the simulation's text (replay mode)."""
+    lines = lines if lines is not None else [
         "SynthFish | boids -> OSC -> Max | MIDI and UDP 7500 control active",
         f"density_fader UP/DOWN: {controls.density_fader:.2f} | section 1-6: {controls.section_name}",
         f"A/Z align {controls.alignment_weight:.2f} | S/X cohesion {controls.cohesion_weight:.2f} | D/C separation {controls.separation_weight:.2f} | N/M noise {controls.noise_weight:.2f}",
@@ -147,10 +152,17 @@ class ClassicRenderer:
     the view, so the classic look stays exactly the same, only bigger.
     """
 
-    def __init__(self, font: pygame.font.Font, people: bool = False, caption: Callable[[], str] | None = None):
+    def __init__(
+        self,
+        font: pygame.font.Font,
+        people: bool = False,
+        caption: Callable[[], str] | None = None,
+        hud: HudLines | None = None,
+    ):
         self.font = font
         self.people = people  # replay: a dot with a heading tick instead of the triangle fish
         self.caption = caption  # replay: caption text, drawn at the bottom-left
+        self.hud = hud  # replay: HUD text instead of the simulation's
         self._caption_font: pygame.font.Font | None = None
         self._world: pygame.Surface | None = None
 
@@ -170,7 +182,7 @@ class ClassicRenderer:
     ) -> None:
         if view.is_identity:
             self._draw_world(canvas, flock, attractor, repeller, self.people)
-            draw_hud(canvas, self.font, controls, descriptors)
+            draw_hud(canvas, self.font, controls, descriptors, lines=self._hud_lines(controls, descriptors))
             self._draw_caption(canvas, view)
             return
         if self._world is None or self._world.get_size() != view.world_size:
@@ -178,8 +190,12 @@ class ClassicRenderer:
         self._draw_world(self._world, flock, attractor, repeller, self.people)
         canvas.fill(BACKGROUND)
         pygame.transform.smoothscale(self._world, view.rect.size, canvas.subsurface(view.rect))
-        draw_hud(canvas, self.font, controls, descriptors, origin=view.rect.topleft)
+        draw_hud(canvas, self.font, controls, descriptors, origin=view.rect.topleft,
+                 lines=self._hud_lines(controls, descriptors))
         self._draw_caption(canvas, view)
+
+    def _hud_lines(self, controls: RuntimeControls, descriptors: dict[str, float]) -> list[str] | None:
+        return None if self.hud is None else self.hud(controls, descriptors)
 
     def _draw_caption(self, canvas: pygame.Surface, view: View) -> None:
         if self.caption is None:
@@ -710,10 +726,12 @@ class ThermalRenderer:
         particles: bool = True,
         people: bool = False,
         caption: Callable[[], str] | None = None,
+        hud: HudLines | None = None,
     ):
         self.font = font
         self.people = people  # replay: people sprites and slower trails instead of fish
         self.caption = caption  # replay: caption text, drawn at the bottom-left in both modes
+        self.hud = hud  # replay: data-mode HUD text instead of the simulation's
         self._caption_font: pygame.font.Font | None = None
         self.mode = mode
         self.trails = trails
@@ -813,7 +831,8 @@ class ThermalRenderer:
             self._events.draw(canvas, view, attractor, repeller, controls)
         canvas.set_clip(None)
         if self.mode == "data":
-            draw_hud(canvas, self.font, controls, descriptors, origin=view.rect.topleft)
+            lines = None if self.hud is None else self.hud(controls, descriptors)
+            draw_hud(canvas, self.font, controls, descriptors, origin=view.rect.topleft, lines=lines)
         if self.caption is not None:
             if self._caption_font is None:
                 self._caption_font = pygame.font.SysFont("consolas", 14)

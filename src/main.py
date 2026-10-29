@@ -216,8 +216,8 @@ def main(argv: list[str] | None = None) -> None:
     display = Display((WIDTH, HEIGHT), args.size, title, fullscreen=args.fullscreen)
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 16)
-    # Replay only: people instead of fish, and a caption with the scene and the data time.
-    replay_look = {"people": True, "caption": replay.caption} if replay is not None else {}
+    # Replay only: people instead of fish, a caption with the scene and the data time, replay HUD text.
+    replay_look = {"people": True, "caption": replay.caption, "hud": replay.hud_lines} if replay is not None else {}
     renderer = (
         ClassicRenderer(font, **replay_look)
         if args.classic

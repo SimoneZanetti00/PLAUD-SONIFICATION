@@ -80,11 +80,39 @@ class Look(unittest.TestCase):
             corner = self.canvas.subsurface(pygame.Rect(10, 725, 300, 20))
             self.assertGreater(max(corner.get_at((x, y))[0] for x in range(0, 300, 3) for y in range(0, 20, 2)), 60)
 
+    def test_replay_hud_text(self):
+        src = ReplaySource(self.path)
+        c = RuntimeControls()
+        src.step(1.0, c, None, None)
+        lines = src.hud_lines(c, {"fish_count": 0.03, "mean_speed": 0.5})
+        text = "\n".join(lines)
+        self.assertIn("PLAUD-SONIFICATION | ", lines[0])
+        self.assertIn("real trajectories (ETH/UCY)", lines[0])
+        self.assertIn("data time 00:00 / 00:11 | playing", text)
+        self.assertIn("people on screen 3 (most at once in the file 3)", text)
+        self.assertNotIn("MIDI", text)
+        self.assertNotIn("align", text)  # boid weights have no effect in replay
+        c.paused = True
+        self.assertIn("| paused |", "\n".join(src.hud_lines(c, {})))
+
+    def test_renderers_use_the_replay_hud(self):
+        src = ReplaySource(self.path)
+        seen = []
+        hud = lambda c, d: seen.append(1) or src.hud_lines(c, d)  # noqa: E731
+        view = View((1200, 750), (1200, 750))
+        c = RuntimeControls()
+        ClassicRenderer(self.font, people=True, hud=hud).draw(self.canvas, view, src.agents, None, None, c, {})
+        ThermalRenderer(self.font, mode="art", people=True, hud=hud).draw(self.canvas, view, src.agents, None, None, c, {})
+        ThermalRenderer(self.font, mode="data", people=True, hud=hud).draw(self.canvas, view, src.agents, None, None, c, {})
+        self.assertEqual(len(seen), 2)  # classic (always) + thermal data mode; not thermal art mode
+
     def test_defaults_stay_fish_without_caption(self):
         self.assertFalse(ThermalRenderer(self.font).people)
         self.assertIsNone(ThermalRenderer(self.font).caption)
         self.assertFalse(ClassicRenderer(self.font).people)
         self.assertIsNone(ClassicRenderer(self.font).caption)
+        self.assertIsNone(ThermalRenderer(self.font).hud)
+        self.assertIsNone(ClassicRenderer(self.font).hud)
 
 
 if __name__ == "__main__":
