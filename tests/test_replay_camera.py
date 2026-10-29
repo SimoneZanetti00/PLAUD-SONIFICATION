@@ -23,7 +23,7 @@ from aquarium_boids.controls import RuntimeControls  # noqa: E402
 from aquarium_boids.render import View  # noqa: E402
 from aquarium_boids.render_data import CAMERA_DIM, DataRenderer  # noqa: E402
 from aquarium_boids.replay.camera import (  # noqa: E402
-    ENV_DIR, Camera, find_camera, invert3, read_homography,
+    ENV_DIR, SCENE_CAMERAS, ZARA01_FIX, Camera, find_camera, invert3, read_homography,
 )
 from aquarium_boids.sources import ReplaySource  # noqa: E402
 
@@ -55,6 +55,21 @@ class Projection(unittest.TestCase):
         cam = Camera(Path("x.png"), ((1, 0, 0), (0, 1, 0), (0, 0, -1)))
         self.assertIsNone(cam.project(1.0, 1.0))
 
+    def test_zara01_correction_regression(self):
+        # 55e6931 drew zara1 mirrored: the zara01 entry must carry the mirror/x1.2/shift correction,
+        # applied after H^-1 and the (row, col) swap; hotel has none.
+        self.assertEqual(SCENE_CAMERAS["crowds_zara01"][2], ZARA01_FIX)
+        self.assertIsNone(SCENE_CAMERAS["biwi_hotel"][2])
+        plain = Camera.from_homography("x.png", H_IMAGE_TO_WORLD)
+        fixed = Camera.from_homography("x.png", H_IMAGE_TO_WORLD, ZARA01_FIX)
+        for x, y in ((6.0, 10.0), (3.5, 1.0), (12.0, 7.5)):
+            col, row = plain.project(x, y)
+            fcol, frow = fixed.project(x, y)
+            self.assertAlmostEqual(fcol, (719 - col - 360) * 1.2 + 360 + 10)
+            self.assertAlmostEqual(frow, (row - 288) * 1.2 + 288 + 40)
+        a, b = fixed.project(6.0, 4.0), fixed.project(6.0, 5.0)  # +y in the world moves left in the frame
+        self.assertLess(b[0], a[0])
+
     def test_read_homography(self):
         with tempfile.TemporaryDirectory() as d:
             good = Path(d) / "H.txt"
@@ -78,6 +93,18 @@ class FindCamera(unittest.TestCase):
             with tempfile.TemporaryDirectory() as d:
                 cam, why = find_camera("crowds_zara01.txt", d)
                 self.assertIn("missing", why)
+
+    def test_zara01_found_with_its_correction(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d) / "zara01"
+            folder.mkdir()
+            (folder / "reference.png").write_bytes(b"png")
+            (folder / "H-cam.txt").write_text(" ".join(str(v) for row in H_IMAGE_TO_WORLD for v in row),
+                                             encoding="utf-8")
+            cam, why = find_camera("crowds_zara01.txt", d)
+            self.assertIsNotNone(cam, why)
+            expected = Camera.from_homography("x.png", H_IMAGE_TO_WORLD, ZARA01_FIX)
+            self.assertEqual(cam.project(6.0, 4.0), expected.project(6.0, 4.0))
 
     def test_found_by_flag_and_by_environment(self):
         with tempfile.TemporaryDirectory() as d:
