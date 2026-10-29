@@ -40,6 +40,7 @@ from aquarium_boids.midi_in import MidiControllerInput
 from aquarium_boids.osc_io import OscSender
 from aquarium_boids.render import ClassicRenderer, Display, ThermalRenderer
 from aquarium_boids.render_data import DataRenderer
+from aquarium_boids.replay.events import EventParams
 from aquarium_boids.replay.loader import FORMATS as REPLAY_FORMATS
 from aquarium_boids.sources import ReplaySource, SimulationSource
 
@@ -159,6 +160,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "thermal look; --classic overrides both",
     )
     replay.add_argument(
+        "--replay-no-events", action="store_true",
+        help="no acceleration events (by default an agitation spike sets the predator: /fx/predator + rings)",
+    )
+    replay.add_argument(
+        "--replay-event-z", type=positive_float, default=3.0, metavar="Z",
+        help="event onset threshold, z-score of the agitation over the last 10 s (default 3)",
+    )
+    replay.add_argument(
+        "--replay-event-refractory", type=positive_float, default=5.0, metavar="S",
+        help="seconds of data time without a new event after one ends (default 5)",
+    )
+    replay.add_argument(
         "--replay-normalise", action="store_true",
         help="map each descriptor to this file's p5..p95 range (fish_count: / most agents on screen)",
     )
@@ -197,6 +210,8 @@ def load_replay(args: argparse.Namespace) -> ReplaySource:
             flip_y=args.replay_flip_y,
             max_agents=args.replay_max_agents,
             normalise=args.replay_normalise,
+            events=not args.replay_no_events,
+            event_params=EventParams(on=args.replay_event_z, refractory=args.replay_event_refractory),
         )
     except (OSError, ValueError) as exc:
         sys.exit(f"--replay: {exc}")
@@ -357,6 +372,8 @@ def main(argv: list[str] | None = None) -> None:
             attractor = Vector2(WIDTH * 0.5, HEIGHT * 0.5)
         if repeller is None and controls.predator_amount > 0.01:
             repeller = Vector2(WIDTH * 0.5, HEIGHT * 0.5)
+        if repeller is None and source.repeller is not None:  # replay: an acceleration event
+            repeller = source.repeller
 
         # Predator scare onset/release for Max: the same state the boids react to (repeller set).
         if (repeller is not None) != predator_active:

@@ -16,6 +16,7 @@ from .boids import Boid
 from .config import BOID_COUNT, CONTROL_PORT, HEIGHT, OSC_HOST, OSC_PORT, PLAIN_UDP_PORT, WIDTH
 from .controls import RuntimeControls
 from .replay.calibrate import Normaliser, calibrate_descriptors, calibrate_speed_force
+from .replay.events import EventDetector, EventParams
 from .replay.interp import DataClock, Piece, Trajectories, per_frame
 from .replay.loader import data_bounds, fit_to_world, load_trajectories, resolve_format, to_world
 
@@ -120,6 +121,8 @@ class SimulationSource:
                 boid.update(dt_scale=dt)
         return flock
 
+    repeller: Vector2 | None = None  # no data-driven events in the simulation
+
     def normalise(self, descriptors: dict[str, float]) -> dict[str, float]:
         """The simulation's descriptors are already on their own scale: returned as they are."""
         return descriptors
@@ -143,6 +146,11 @@ class ReplaySource:
     - Mouse food/predator and the weight keys have no effect on the data. controls.population
       mirrors the number of agents on screen, so the HUD shows it and -/= do nothing.
     - At the end of the data (without loop) the last frame holds, like a pause.
+    - Events (REPLAY_04 3.7, on unless events=False): a z-score detector on the agitation (mean |a|
+      over the calibrated p95) in data time. At an onset `repeller` is set to the position of the
+      most accelerating person, so main.py sends /fx/predator 1 and the renderers draw the
+      rings there; controls.predator_strength follows the event (restored after it). The repeller
+      exerts no force: the data already contains the people's reaction.
     """
 
     def __init__(
@@ -155,6 +163,8 @@ class ReplaySource:
         flip_y: bool = False,
         max_agents: int = BOID_COUNT,
         normalise: bool = False,
+        events: bool = True,
+        event_params: EventParams = EventParams(),
         world: tuple[float, float] = (WIDTH, HEIGHT),
     ) -> None:
         if max_agents < 1:
@@ -176,6 +186,10 @@ class ReplaySource:
         self.normaliser: Normaliser | None = (
             calibrate_descriptors(self.trajectories, speed, max_agents, self.calibration, world) if normalise else None
         )
+        self.detector = EventDetector(event_params) if events else None
+        self.repeller: Vector2 | None = None  # set during an event (read by main.py)
+        self.event_log: list[tuple[float, tuple[float, float], int, float]] = []  # (s from start, data xy, people, z)
+        self._saved_strength: float | None = None  # controls.predator_strength before an event
         self.agents: list[Boid] = []
         self._pieces: list[Piece] = []  # parallel to agents
         self.peak_waiting = 0  # most pieces kept off screen at once by max_agents
@@ -187,7 +201,8 @@ class ReplaySource:
             f"scale {transform.scale:.2f} px/unit, speed x{speed:g}, loop {'on' if loop else 'off'}, "
             f"cap {max_agents}; max_speed {self.calibration.max_speed:.3f} px/frame, "
             f"max_force {self.calibration.max_force:.5f} px/frame^2 (p95 of {self.calibration.samples} samples), "
-            f"normalise {'on' if normalise else 'off'}"
+            f"normalise {'on' if normalise else 'off'}, events "
+            + (f"z > {event_params.on:g}, refractory {event_params.refractory:g} s" if events else "off")
         )
         self._sync(self.clock.t)
 
@@ -197,6 +212,7 @@ class ReplaySource:
         self.agents = []
         self._pieces = []
         self._end_reported = False
+        self._end_event()
         self._sync(self.clock.t)
 
     def step(
@@ -208,14 +224,62 @@ class ReplaySource:
     ) -> list[Boid]:
         if not controls.paused and not self.clock.finished:
             t = self.clock.advance(dt)
+            if self.clock.wrapped:  # loop: data time jumped back, the rolling window is stale
+                self._end_event()
             self._sync(t)
             for boid in self.agents:  # Boid.update's flash decay; update() itself is never called
                 boid.flash = max(0.0, boid.flash - 0.045 * dt)
+            self._detect(t)
         if self.clock.finished and not self._end_reported:
             print("[replay] end of data, holding the last frame (R restarts)")
             self._end_reported = True
+            self._end_event()
+        self._apply_strength(controls)
         controls.population = len(self.agents)
         return self.agents
+
+    def _detect(self, t: float) -> None:
+        if self.detector is None:
+            return
+        agents = self.agents
+        p95_accel = self.calibration.max_force * 6.0
+        value = sum(b.acceleration.length() for b in agents) / len(agents) / p95_accel if agents else 0.0
+        self.detector.update(t, value)
+        if self.detector.onset and agents:
+            strongest = max(agents, key=lambda b: b.acceleration.length())  # the person who triggered it
+            centre = Vector2(strongest.position)
+            self.repeller = centre
+            self.event_log.append((t - self.clock.start, self.transform.to_data(centre.x, centre.y), len(agents),
+                                   self.detector.z))
+        elif self.detector.released:
+            self.repeller = None
+
+    def _end_event(self) -> None:
+        """Drop a running event (restart, loop wrap, end of data) and clear the detector's window."""
+        self.repeller = None
+        if self.detector is not None:
+            self.detector.reset()
+
+    def _apply_strength(self, controls: RuntimeControls) -> None:
+        """During an event predator_strength follows it; afterwards the previous value comes back."""
+        if self.detector is not None and self.detector.active:
+            if self._saved_strength is None:
+                self._saved_strength = controls.predator_strength
+            controls.predator_strength = self.detector.strength()
+        elif self._saved_strength is not None:
+            controls.predator_strength = self._saved_strength
+            self._saved_strength = None
+
+    def event_status(self) -> str:
+        """One HUD/label line about events."""
+        if self.detector is None:
+            return "events off"
+        minutes = max(1e-9, (self.clock.t - self.clock.start) / 60.0)
+        head = f"events {len(self.event_log)} ({len(self.event_log) / minutes:.1f}/min)" if minutes > 0.1 \
+            else f"events {len(self.event_log)}"
+        if self.detector.active:
+            return f"{head} | ACTIVE z {self.detector.peak_z:.1f} strength {self.detector.strength() / 3:.2f}"
+        return f"{head} | z {self.detector.z:+.1f}"
 
     def caption(self) -> str:
         """Scene, citation and data time, e.g. "... zara1 - real trajectories (UCY: Lerner et al. 2007)   01:23 / 06:00"."""
@@ -243,13 +307,13 @@ class ReplaySource:
         d = descriptors.get
         state = "end of data" if self.clock.finished else ("paused" if controls.paused else "playing")
         return [
-            f"PLAUD-SONIFICATION | {self.scene} | real trajectories ({self.source_label}) -> OSC -> Max",
+            f"PLAUD-SONIFICATION | {self.scene} | real trajectories ({self.citation}) -> OSC -> Max",
             f"data time {mmss(self.clock.t - self.clock.start)} / {mmss(self.clock.end - self.clock.start)} | "
             f"{state} | speed x{self.speed:g} | loop {'on' if self.loop else 'off'} | SPACE pause | R restart",
             f"people on screen {len(self.agents)} (most at once in the file {self.max_population}) | "
             f"fish_count {d('fish_count', 0):.2f}{' (normalised)' if self.normaliser is not None else ''}",
             f"source: {self.reference}",
-            f"predator_amount {controls.predator_amount:.2f} (UDP) | mouse right = predator rings, no force on the data",
+            f"{self.event_status()} | predator_amount {controls.predator_amount:.2f} (UDP) | no force on the data",
             f"OSC out: {OSC_HOST}:{OSC_PORT} | plain out: {PLAIN_UDP_PORT} | control in: {CONTROL_PORT}",
             f"mean_speed {d('mean_speed', 0):.2f} | energy {d('energy', 0):.2f} | density {d('density', 0):.2f} | "
             f"spread {d('spread', 0):.2f} | coherence {d('direction_coherence', 0):.2f}",

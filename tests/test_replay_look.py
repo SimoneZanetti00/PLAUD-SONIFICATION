@@ -91,7 +91,7 @@ class Look(unittest.TestCase):
         lines = src.hud_lines(c, {"fish_count": 0.03, "mean_speed": 0.5})
         text = "\n".join(lines)
         self.assertIn("PLAUD-SONIFICATION | ", lines[0])
-        self.assertIn("real trajectories (ETH/UCY)", lines[0])
+        self.assertIn("real trajectories (ETH/UCY: ", lines[0])  # unknown .txt scene: both citations
         self.assertIn("data time 00:00 / 00:11 | playing", text)
         self.assertIn("people on screen 3 (most at once in the file 3)", text)
         self.assertNotIn("MIDI", text)

@@ -138,7 +138,11 @@ class DataRenderer:
         if attractor is not None:
             pygame.draw.circle(canvas, FOOD_RING, to_canvas(attractor.x, attractor.y), 18 * s, 1)
         if repeller is not None:
-            pygame.draw.circle(canvas, EVENT_RING, to_canvas(repeller.x, repeller.y), 34 * s, 1)
+            centre = to_canvas(repeller.x, repeller.y)
+            pygame.draw.circle(canvas, EVENT_RING, centre, 34 * s, 1)
+            if repeller is self.source.repeller and self.source.detector is not None:
+                text = self._small.render(f"acceleration event  z {self.source.detector.peak_z:.1f}", True, EVENT_RING)
+                canvas.blit(text, (centre[0] + 38 * s, centre[1] - text.get_height() / 2))
         canvas.set_clip(None)
         self._draw_scale_and_legend(canvas, view)
         if self.mode == "data":
