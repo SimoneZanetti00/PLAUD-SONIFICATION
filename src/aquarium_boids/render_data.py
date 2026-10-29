@@ -10,6 +10,10 @@ Camera view (--replay-view camera): the scene's OpenTraj reference frame drawn a
 the same people, paths, rings and labels projected into it through the frame's homography
 (replay/camera.py). Display only: the agents, descriptors and OSC stay in world metres. No grid
 or scale bar there (the perspective changes the scale across the frame).
+
+Video view (--replay-view video): the same, over the scene's original video at frame
+round(25 x data time) (replay/video.py, decoded in a background thread; until the first frame
+arrives, and while a seek runs, the reference frame or the previous video frame stays up).
 """
 from __future__ import annotations
 
@@ -23,10 +27,12 @@ from pygame.math import Vector2
 
 from .controls import RuntimeControls
 from .render import View, draw_caption, draw_hud
+from .replay.camera import VIDEO_CREDIT
 
 if TYPE_CHECKING:
     from .boids import Boid
     from .replay.camera import Camera
+    from .replay.video import VideoFrames
     from .sources import ReplaySource
 
 Projector = Callable[[float, float], "tuple[float, float] | None"]  # world px -> canvas px (None: not drawable)
@@ -89,11 +95,15 @@ class DataRenderer:
     MODES = ("art", "data")
 
     def __init__(self, font: pygame.font.Font, source: "ReplaySource", mode: str = "art",
-                 camera: "Camera | None" = None):
+                 camera: "Camera | None" = None, video: "VideoFrames | None" = None):
         self.font = font
         self.source = source
         self.mode = mode
         self.camera = camera
+        self.video = video  # only together with a camera (the projection is the camera's)
+        self._video_frame: tuple[int, tuple[int, int]] | None = None
+        self._video_surface: pygame.Surface | None = None
+        self._video_bytes: bytes | None = None  # keeps the buffer behind _video_surface alive
         self.labels = False
         self._frame: pygame.Surface | None = None
         self._frame_key: tuple | None = None
@@ -152,7 +162,9 @@ class DataRenderer:
         if self.mode == "data":
             draw_hud(canvas, self.font, controls, descriptors, origin=rect.topleft,
                      lines=self.source.hud_lines(controls, descriptors))
-        extra = f" + {self.camera.credit}" if self.camera is not None else ""
+        extra = ""
+        if self.camera is not None:
+            extra = f" + {VIDEO_CREDIT if self.video is not None else self.camera.credit}"
         draw_caption(canvas, self._small, self.source.caption(extra), rect)
 
     def _draw_agents(self, canvas: pygame.Surface, project: Projector, k: float) -> None:
@@ -199,7 +211,8 @@ class DataRenderer:
             self._frame_fit = fit
         frame, fit = self._frame, self._frame_fit
         rect = frame.get_rect(center=canvas.get_rect().center)
-        canvas.blit(frame, rect)
+        background = self._video_background(rect.size)
+        canvas.blit(frame if background is None else background, rect)
         to_data = self.source.transform.to_data
 
         def project(x: float, y: float) -> tuple[float, float] | None:
@@ -209,6 +222,22 @@ class DataRenderer:
             return (rect.x + pixel[0] * fit, rect.y + pixel[1] * fit)
 
         return rect, fit, project
+
+    def _video_background(self, size: tuple[int, int]) -> pygame.Surface | None:
+        """The video frame for the current data time (dimmed, at `size`), or None if none is ready."""
+        if self.video is None:
+            return None
+        self.video.request(self.video.frame_for(self.source.clock.t), size)
+        latest = self.video.latest()
+        if latest is None or latest[1] != size:
+            return self._video_surface if self._video_surface is not None and \
+                self._video_surface.get_size() == size else None
+        index, got_size, data = latest
+        if (index, got_size) != self._video_frame:
+            self._video_bytes = data
+            self._video_surface = pygame.image.frombuffer(data, got_size, "RGB")
+            self._video_frame = (index, got_size)
+        return self._video_surface
 
     def _label(self, track_id: str) -> pygame.Surface:
         img = self._label_cache.get(track_id)

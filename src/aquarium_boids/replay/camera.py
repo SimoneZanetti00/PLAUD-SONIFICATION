@@ -23,6 +23,8 @@ from pathlib import Path
 
 ENV_DIR = "PLAUD_OPENTRAJ_DIR"
 CREDIT = "OpenTraj frame (Amirian et al. 2020)"
+VIDEO_CREDIT = "OpenTraj video (Amirian et al. 2020)"
+VIDEO_NAME = "video.avi"
 
 # Image-space correction applied after H^-1: (col, row) -> (col', row'), as a 3x3 affine matrix.
 # zara01: col' = (719 - col - 360) x 1.2 + 360 + 10, row' = (row - 288) x 1.2 + 288 + 40.
@@ -86,6 +88,16 @@ class Camera:
         if w <= 1e-9:
             return None
         return ((a * x + b * y + c) / w, (d * x + e * y + f) / w)
+
+
+def find_video(replay_path: str | Path, directory: str | Path | None) -> tuple[Path | None, str]:
+    """<dir>/<scene folder>/video.avi for a replay file, or (None, why not)."""
+    stem = Path(replay_path).stem
+    directory = directory or os.environ.get(ENV_DIR)
+    if stem not in SCENE_CAMERAS or not directory:
+        return None, "no camera for this scene"
+    video = Path(directory) / SCENE_CAMERAS[stem][0] / VIDEO_NAME
+    return (video, "") if video.is_file() else (None, f"missing {video}")
 
 
 def find_camera(replay_path: str | Path, directory: str | Path | None) -> tuple[Camera | None, str]:

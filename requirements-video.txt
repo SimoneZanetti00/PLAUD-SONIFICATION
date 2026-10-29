@@ -1,0 +1,5 @@
+# Optional: the replay video view (--replay-view video), OpenCV decodes the OpenTraj videos.
+# Tested in a fresh Python 3.13 venv with these exact versions.
+-r requirements.txt
+opencv-python==5.0.0.93
+numpy==2.5.4

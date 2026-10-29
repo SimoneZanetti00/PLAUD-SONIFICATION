@@ -39,8 +39,8 @@ from aquarium_boids.markov import LAYERS, SECTIONS, SymbolicGenerator
 from aquarium_boids.midi_in import MidiControllerInput
 from aquarium_boids.osc_io import OscSender
 from aquarium_boids.render import ClassicRenderer, Display, ThermalRenderer
-from aquarium_boids.render_data import DataRenderer
-from aquarium_boids.replay.camera import ENV_DIR as CAMERA_ENV_DIR, find_camera
+from aquarium_boids.render_data import CAMERA_DIM, DataRenderer
+from aquarium_boids.replay.camera import ENV_DIR as CAMERA_ENV_DIR, find_camera, find_video
 from aquarium_boids.replay.events import EventParams
 from aquarium_boids.replay.loader import FORMATS as REPLAY_FORMATS
 from aquarium_boids.sources import ReplaySource, SimulationSource
@@ -161,13 +161,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "thermal look; --classic overrides both",
     )
     replay.add_argument(
-        "--replay-view", choices=("map", "camera"), default="map",
-        help="data look: map (default, metric grid) or camera (the scene's OpenTraj reference frame, "
-        "dimmed, with the people projected into it; zara1 and hotel only)",
+        "--replay-view", choices=("map", "camera", "video"), default="map",
+        help="data look: map (default, metric grid), camera (the scene's OpenTraj reference frame, dimmed, "
+        "with the people projected into it) or video (the original video behind them, frame = 25 x data "
+        "time; needs OpenCV, see requirements-video.txt); camera and video: zara1 and hotel only",
     )
     replay.add_argument(
         "--replay-camera-dir", metavar="DIR",
-        help=f"folder with the OpenTraj frames and homographies (zara01/, seq_hotel/); default ${CAMERA_ENV_DIR}",
+        help=f"folder with the OpenTraj frames, homographies and videos (zara01/, seq_hotel/); "
+        f"default ${CAMERA_ENV_DIR}",
     )
     replay.add_argument(
         "--replay-no-events", action="store_true",
@@ -230,18 +232,32 @@ def load_replay(args: argparse.Namespace) -> ReplaySource:
 
 
 def replay_camera(args: argparse.Namespace):
-    """--replay-view camera: the scene's reference frame, or None (with the reason) -> map view."""
-    if args.replay_view != "camera":
-        return None
+    """--replay-view camera / video -> (camera, video); anything missing falls back with the reason:
+    video -> camera view -> map view (None, None)."""
+    if args.replay_view == "map":
+        return None, None
     if args.classic or args.replay_look != "data":
-        print("[replay] camera view needs the data look; using the map view")
-        return None
+        print(f"[replay] {args.replay_view} view needs the data look; using the map view")
+        return None, None
     camera, why = find_camera(args.replay, args.replay_camera_dir)
     if camera is None:
-        print(f"[replay] camera view not available: {why}; using the map view")
-    else:
-        print(f"[replay] camera view: {camera.image_path}")
-    return camera
+        print(f"[replay] {args.replay_view} view not available: {why}; using the map view")
+        return None, None
+    if args.replay_view == "video":
+        from aquarium_boids.replay.video import VideoFrames  # cv2 is imported only inside
+
+        path, why = find_video(args.replay, args.replay_camera_dir)
+        if path is not None:
+            try:
+                video = VideoFrames(path, dim=CAMERA_DIM)
+            except RuntimeError as exc:
+                why = str(exc)
+            else:
+                print(f"[replay] video view: {path} ({video.count} frames at {video.fps:g} fps)")
+                return camera, video
+        print(f"[replay] video view not available: {why}; using the camera view")
+    print(f"[replay] camera view: {camera.image_path}")
+    return camera, None
 
 
 def parse_size(text: str) -> tuple[int, int]:
@@ -262,13 +278,13 @@ def main(argv: list[str] | None = None) -> None:
     display = Display((WIDTH, HEIGHT), args.size, title, fullscreen=args.fullscreen)
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 16)
-    camera = replay_camera(args) if replay is not None else None
+    camera, video = replay_camera(args) if replay is not None else (None, None)
     # Replay only: people instead of fish, a caption with the scene and the data time, replay HUD text.
     replay_look = {"people": True, "caption": replay.caption, "hud": replay.hud_lines} if replay is not None else {}
     renderer = (
         ClassicRenderer(font, **replay_look)
         if args.classic
-        else DataRenderer(font, replay, mode=args.mode, camera=camera)
+        else DataRenderer(font, replay, mode=args.mode, camera=camera, video=video)
         if replay is not None and args.replay_look == "data"
         else ThermalRenderer(
             font,
