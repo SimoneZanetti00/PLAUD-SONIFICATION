@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import random
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 
 import pygame
@@ -146,8 +147,11 @@ class ClassicRenderer:
     the view, so the classic look stays exactly the same, only bigger.
     """
 
-    def __init__(self, font: pygame.font.Font):
+    def __init__(self, font: pygame.font.Font, people: bool = False, caption: Callable[[], str] | None = None):
         self.font = font
+        self.people = people  # replay: a dot with a heading tick instead of the triangle fish
+        self.caption = caption  # replay: caption text, drawn at the bottom-left
+        self._caption_font: pygame.font.Font | None = None
         self._world: pygame.Surface | None = None
 
     def handle_key(self, key: int) -> bool:
@@ -165,15 +169,24 @@ class ClassicRenderer:
         descriptors: dict[str, float],
     ) -> None:
         if view.is_identity:
-            self._draw_world(canvas, flock, attractor, repeller)
+            self._draw_world(canvas, flock, attractor, repeller, self.people)
             draw_hud(canvas, self.font, controls, descriptors)
+            self._draw_caption(canvas, view)
             return
         if self._world is None or self._world.get_size() != view.world_size:
             self._world = pygame.Surface(view.world_size)
-        self._draw_world(self._world, flock, attractor, repeller)
+        self._draw_world(self._world, flock, attractor, repeller, self.people)
         canvas.fill(BACKGROUND)
         pygame.transform.smoothscale(self._world, view.rect.size, canvas.subsurface(view.rect))
         draw_hud(canvas, self.font, controls, descriptors, origin=view.rect.topleft)
+        self._draw_caption(canvas, view)
+
+    def _draw_caption(self, canvas: pygame.Surface, view: View) -> None:
+        if self.caption is None:
+            return
+        if self._caption_font is None:
+            self._caption_font = pygame.font.SysFont("consolas", 14)
+        draw_caption(canvas, self._caption_font, self.caption(), view.rect)
 
     @staticmethod
     def _draw_world(
@@ -181,6 +194,7 @@ class ClassicRenderer:
         flock: list[Boid],
         attractor: Vector2 | None,
         repeller: Vector2 | None,
+        people: bool = False,
     ) -> None:
         surface.fill(BACKGROUND)
         if attractor is not None:
@@ -188,7 +202,20 @@ class ClassicRenderer:
         if repeller is not None:
             pygame.draw.circle(surface, (255, 80, 90), repeller, 34, 2)
         for boid in flock:
-            boid.draw(surface)
+            if people:
+                draw_person(surface, boid)
+            else:
+                boid.draw(surface)
+
+
+def draw_person(surface: pygame.Surface, boid: Boid) -> None:
+    """Classic look, replay: a dot with a short heading tick in the agent's colour."""
+    if boid.velocity.length_squared() > 1e-12:
+        heading = boid.velocity.normalize()
+        start, end, _ = PERSON_TICK
+        pygame.draw.line(surface, boid.color, boid.position + heading * boid.size * start,
+                         boid.position + heading * boid.size * end, 2)
+    pygame.draw.circle(surface, boid.color, boid.position, max(2, int(round(boid.size * PERSON_HEAD))))
 
 
 THERMAL_BACKGROUND = (0, 0, 0)
@@ -392,6 +419,85 @@ class FishSprites:
                     halo_by_heat[h].append(glow.convert())
             self.body.append(body_by_heat)
             self.halo.append(halo_by_heat)
+
+
+# Replay mode (--replay): agents are people seen from above, a head with a short heading tick,
+# in units of boid.size like the fish. Same heat palette, sizes, headings and blending.
+PERSON_HEAD = 0.5  # head radius
+PERSON_TICK = (0.62, 1.45, 0.13)  # heading tick: from, to (along +x), half-width
+PERSON_HALO = 1.7  # halo radius relative to the head
+# People walk ~1 px/frame (the fish up to 4), so their trails fade slower to show a few metres
+# of path: x0.973 per frame (~1.5 s to fade out). Fixed, not tied to energy like the fish trails.
+PERSON_TRAIL_FADE = 249
+
+
+def _circle_polygon(radius: float, steps: int = 24, cx: float = 0.0) -> list[tuple[float, float]]:
+    return [(cx + radius * math.cos(a), radius * math.sin(a)) for a in (math.tau * i / steps for i in range(steps))]
+
+
+def _person_shapes() -> list[list[tuple[float, float]]]:
+    start, end, half_width = PERSON_TICK
+    tick = [(start, -half_width), (end, -half_width), (end, half_width), (start, half_width)]
+    return [_circle_polygon(PERSON_HEAD), tick]
+
+
+def _shapes_mask(shapes: list[list[tuple[float, float]]], angle: float, unit: float, side: int,
+                 render_side: int) -> pygame.Surface:
+    """Like _mask, for several polygons drawn into one coverage mask."""
+    k = render_side / side
+    surface = pygame.Surface((render_side, render_side))
+    for points in shapes:
+        pygame.draw.polygon(surface, (255, 255, 255), _rotated(points, angle, unit * k, render_side / 2))
+    return pygame.transform.smoothscale(surface, (side, side))
+
+
+class PeopleSprites:
+    """Pre-rendered people, same layout as FishSprites: [size_bin][heat_level][heading] -> Surface."""
+
+    def __init__(self, scale: float):
+        shapes = _person_shapes()
+        core = [_circle_polygon(PERSON_HEAD * 0.45)]
+        halo = [_circle_polygon(PERSON_HEAD * PERSON_HALO)]
+        body_colors = [_lerp_stops(BODY_STOPS, (h + 0.5) / HEAT_LEVELS) for h in range(HEAT_LEVELS)]
+        core_colors = [_lerp_stops(CORE_STOPS, (h + 0.5) / HEAT_LEVELS) for h in range(HEAT_LEVELS)]
+        halo_colors = [_lerp_stops(HALO_STOPS, (h + 0.5) / HEAT_LEVELS) for h in range(HEAT_LEVELS)]
+
+        self.half: list[int] = []
+        self.body: list[list[list[pygame.Surface]]] = []
+        self.halo: list[list[list[pygame.Surface]]] = []
+        for size in SIZE_BINS:
+            unit = size * scale
+            half = int(math.ceil(max(PERSON_TICK[1], PERSON_HEAD * PERSON_HALO) * unit)) + 2
+            side = 2 * half
+            self.half.append(half)
+            core_mask = _shapes_mask(core, 0.0, unit, side, side * SUPERSAMPLE)  # round: one for all headings
+            halo_mask = _soft(_shapes_mask(halo, 0.0, unit, side, side * 2))
+            halos = []
+            for h in range(HEAT_LEVELS):
+                glow = halo_mask.copy()
+                glow.fill(halo_colors[h], special_flags=pygame.BLEND_RGB_MULT)
+                halos.append(glow.convert())
+            body_by_heat = [[] for _ in range(HEAT_LEVELS)]
+            for k in range(HEADINGS):
+                body_mask = _shapes_mask(shapes, math.tau * k / HEADINGS, unit, side, side * SUPERSAMPLE)
+                for h in range(HEAT_LEVELS):
+                    body = body_mask.copy()
+                    body.fill(body_colors[h], special_flags=pygame.BLEND_RGB_MULT)
+                    tinted_core = core_mask.copy()
+                    tinted_core.fill(core_colors[h], special_flags=pygame.BLEND_RGB_MULT)
+                    body.blit(tinted_core, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
+                    body_by_heat[h].append(body.convert())
+            self.body.append(body_by_heat)
+            self.halo.append([[halos[h]] * HEADINGS for h in range(HEAT_LEVELS)])
+
+
+CAPTION_TEXT = (150, 150, 165)
+
+
+def draw_caption(surface: pygame.Surface, font: pygame.font.Font, text: str, view_rect: pygame.Rect) -> None:
+    """One dim line at the bottom-left of the view (replay: scene name and data time)."""
+    img = font.render(text, True, CAPTION_TEXT)
+    surface.blit(img, (view_rect.left + 12, view_rect.bottom - img.get_height() - 10))
 
 
 # Food and predator cues. Strength mirrors the simulation (boids.py:130,136): the fader
@@ -602,14 +708,19 @@ class ThermalRenderer:
         trails: bool = True,
         glow: bool = True,
         particles: bool = True,
+        people: bool = False,
+        caption: Callable[[], str] | None = None,
     ):
         self.font = font
+        self.people = people  # replay: people sprites and slower trails instead of fish
+        self.caption = caption  # replay: caption text, drawn at the bottom-left in both modes
+        self._caption_font: pygame.font.Font | None = None
         self.mode = mode
         self.trails = trails
         self.glow = glow
         self.particles = particles
         self._particle_field: ParticleField | None = None
-        self._sprite_cache: dict[float, FishSprites] = {}
+        self._sprite_cache: dict[float, FishSprites | PeopleSprites] = {}
         self._glow_blob_cache: dict[float, GlowBlobs] = {}
         self._glow_buffers: GlowBuffers | None = None
         self._events = EventLayer()
@@ -659,7 +770,7 @@ class ThermalRenderer:
             self._floor_surface.fill((TRAIL_FLOOR,) * 3)
         with _stage("thermal.trails"):
             if self.trails:
-                fade = trail_fade(descriptors.get("energy", 0.0))
+                fade = PERSON_TRAIL_FADE if self.people else trail_fade(descriptors.get("energy", 0.0))
                 if fade != self._fade_value:
                     self._fade_surface.fill((fade, fade, fade))
                     self._fade_value = fade
@@ -703,12 +814,16 @@ class ThermalRenderer:
         canvas.set_clip(None)
         if self.mode == "data":
             draw_hud(canvas, self.font, controls, descriptors, origin=view.rect.topleft)
+        if self.caption is not None:
+            if self._caption_font is None:
+                self._caption_font = pygame.font.SysFont("consolas", 14)
+            draw_caption(canvas, self._caption_font, self.caption(), view.rect)
 
-    def _sprites_for(self, scale: float) -> FishSprites:
+    def _sprites_for(self, scale: float) -> FishSprites | PeopleSprites:
         key = round(scale, 4)
         sprites = self._sprite_cache.get(key)
         if sprites is None:
-            sprites = FishSprites(scale)
+            sprites = PeopleSprites(scale) if self.people else FishSprites(scale)
             self._sprite_cache[key] = sprites
         return sprites
 
@@ -723,7 +838,7 @@ class ThermalRenderer:
     @staticmethod
     def _fish_blits(
         flock: list[Boid],
-        sprites: FishSprites,
+        sprites: FishSprites | PeopleSprites,
         blobs: GlowBlobs | None,
         scale: float,
         ox: int,

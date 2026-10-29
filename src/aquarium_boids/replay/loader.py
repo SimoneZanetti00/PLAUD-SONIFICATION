@@ -100,12 +100,18 @@ def _finite(text: str | None, name: str) -> float:
 
 FORMATS = ("auto", "csv", "eth-ucy")
 
-def load_trajectories(path: str | Path, fmt: str = "auto", fps: float = 2.5, frame_step: int | None = None) -> Dataset:
-    """Load any supported file. fmt "auto": `.txt` = eth-ucy, anything else = csv."""
+def resolve_format(path: str | Path, fmt: str = "auto") -> str:
+    """The reader a file will use: fmt "auto" = eth-ucy for `.txt`, csv otherwise."""
     if fmt not in FORMATS:
         raise ValueError(f"unknown format {fmt!r} (expected one of {', '.join(FORMATS)})")
     if fmt == "auto":
-        fmt = "eth-ucy" if Path(path).suffix.lower() == ".txt" else "csv"
+        return "eth-ucy" if Path(path).suffix.lower() == ".txt" else "csv"
+    return fmt
+
+
+def load_trajectories(path: str | Path, fmt: str = "auto", fps: float = 2.5, frame_step: int | None = None) -> Dataset:
+    """Load any supported file. fmt "auto": `.txt` = eth-ucy, anything else = csv."""
+    fmt = resolve_format(path, fmt)
     return load_eth_ucy(path, fps, frame_step) if fmt == "eth-ucy" else load_csv(path, fps, frame_step)
 
 

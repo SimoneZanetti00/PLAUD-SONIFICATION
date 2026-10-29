@@ -16,10 +16,34 @@ from .config import BOID_COUNT, HEIGHT, WIDTH
 from .controls import RuntimeControls
 from .replay.calibrate import Normaliser, calibrate_descriptors, calibrate_speed_force
 from .replay.interp import DataClock, Piece, Trajectories, per_frame
-from .replay.loader import data_bounds, fit_to_world, load_trajectories, to_world
+from .replay.loader import data_bounds, fit_to_world, load_trajectories, resolve_format, to_world
 
 REPLAY_MARGIN = 60.0  # world px kept free around the data (same as the joystick margin)
 REPLAY_COLORS = [(80, 210, 255), (105, 255, 190), (255, 190, 95), (220, 160, 255)]  # Boid.create's palette
+# ETH/UCY file names (Social GAN / Trajectron++) -> scene names used in the literature.
+ETH_UCY_SCENES = {
+    "biwi_eth": "eth",
+    "biwi_hotel": "hotel",
+    "crowds_zara01": "zara1",
+    "crowds_zara02": "zara2",
+    "crowds_zara03": "zara3",
+    "students001": "univ (students001)",
+    "students003": "univ (students003)",
+    "uni_examples": "univ (examples)",
+}
+
+
+def scene_title(path: str | Path, fmt: str) -> str:
+    """Window title for a replay, e.g. "PLAUD-SONIFICATION - zara1 - real trajectories (ETH/UCY)"."""
+    stem = Path(path).stem
+    if resolve_format(path, fmt) == "eth-ucy":
+        return f"PLAUD-SONIFICATION - {ETH_UCY_SCENES.get(stem, stem)} - real trajectories (ETH/UCY)"
+    return f"PLAUD-SONIFICATION - {stem} - real trajectories (CSV)"
+
+
+def mmss(seconds: float) -> str:
+    seconds = max(0, int(round(seconds, 6)))  # 4.9999999 after 300 frames of 1/60 s is 00:05
+    return f"{seconds // 60:02d}:{seconds % 60:02d}"
 
 
 def create_flock(count: int) -> list[Boid]:
@@ -112,6 +136,7 @@ class ReplaySource:
         self.clock = DataClock(self.trajectories.t_start, self.trajectories.t_end, speed=speed, loop=loop)
         self.speed = speed
         self.max_agents = max_agents
+        self.title = scene_title(path, fmt)
         self.calibration = calibrate_speed_force(self.trajectories, speed, max_agents)
         self.normaliser: Normaliser | None = (
             calibrate_descriptors(self.trajectories, speed, max_agents, self.calibration, world) if normalise else None
@@ -156,6 +181,10 @@ class ReplaySource:
             self._end_reported = True
         controls.population = len(self.agents)
         return self.agents
+
+    def caption(self) -> str:
+        """Title plus data time since the start of the file, e.g. "... (ETH/UCY)   01:23 / 06:00"."""
+        return f"{self.title}   {mmss(self.clock.t - self.clock.start)} / {mmss(self.clock.end - self.clock.start)}"
 
     def normalise(self, descriptors: dict[str, float]) -> dict[str, float]:
         """With --replay-normalise: the file's p5..p95 -> 0..1 (before the smoother); else unchanged."""

@@ -212,11 +212,14 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     replay = load_replay(args) if args.replay else None
     pygame.init()
-    display = Display((WIDTH, HEIGHT), args.size, "SynthFish - boids -> OSC -> Max", fullscreen=args.fullscreen)
+    title = replay.title if replay is not None else "SynthFish - boids -> OSC -> Max"
+    display = Display((WIDTH, HEIGHT), args.size, title, fullscreen=args.fullscreen)
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 16)
+    # Replay only: people instead of fish, and a caption with the scene and the data time.
+    replay_look = {"people": True, "caption": replay.caption} if replay is not None else {}
     renderer = (
-        ClassicRenderer(font)
+        ClassicRenderer(font, **replay_look)
         if args.classic
         else ThermalRenderer(
             font,
@@ -224,6 +227,7 @@ def main(argv: list[str] | None = None) -> None:
             trails=not args.no_trails,
             glow=not args.no_glow,
             particles=not args.no_particles,
+            **replay_look,
         )
     )
 
