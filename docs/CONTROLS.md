@@ -16,6 +16,7 @@ python src/main.py [--fullscreen] [--classic] [--mode art|data] [--size WxH]
 | `--mode art` / `--mode data` | thermal look without / with the HUD (default `art`) |
 | `--size 1920x1080` | window size (at least 320x200); the simulation is always 1200x750 |
 | `--no-trails`, `--no-glow`, `--no-particles` | start with that thermal layer off |
+| `--replay FILE` and the other `--replay-…` options | real trajectories instead of the simulation: see [Replay mode](#replay-mode) and [REPLAY.md](REPLAY.md#command-line) |
 
 ## Keyboard and mouse
 
@@ -36,6 +37,23 @@ python src/main.py [--fullscreen] [--classic] [--mode art|data] [--size WxH]
 | `ESC` | quit (sends `/fx/predator 0` first) |
 
 The keyboard has no upper limit on the weights, unlike MIDI and UDP, which clip.
+
+## Replay mode
+
+With `--replay FILE` ([REPLAY.md](REPLAY.md)) the people come from the data. **MIDI is off**; the
+UDP control port 7500 stays open. The keys change meaning like this:
+
+| Input | Effect in replay mode |
+|---|---|
+| `SPACE` | pause / resume the data (the video view holds its frame) |
+| `R` | restart the file from the beginning |
+| `I` | data look: track id labels on / off |
+| `H` | data look and thermal look: HUD on / off |
+| mouse left / right | draw the food / predator rings; the predator still sends `/fx/predator` to Max. Neither moves anyone |
+| `-` / `=`, weight keys `A`/`Z`, `S`/`X`, `D`/`C`, `N`/`M` | no effect (the HUD shows the people on screen) |
+| `UP`/`DOWN`, `1`–`6` | still set `density_fader` and the section of the legacy Markov layer (not shown in the replay HUD) |
+| `T` / `G` / `P` | thermal look only (`--replay-look thermal`) |
+| `F11`, `ESC` | as usual |
 
 ## AKAI MPK mini 3
 

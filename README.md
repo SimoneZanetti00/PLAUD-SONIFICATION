@@ -60,6 +60,21 @@ Options:
 
 All keys and options are listed in [docs/CONTROLS.md](docs/CONTROLS.md).
 
+## Real-data sonification
+
+The same pipeline can sonify **real crowds** instead of simulated fish. `--replay` moves the agents
+along recorded pedestrian trajectories (the ETH/UCY datasets, or any CSV of positions); the
+descriptors, OSC, PLAUD and the Max patches stay the same. Events in the data (sudden agitation)
+trigger the predator kick, and the picture can show the people on a metric map, on the scene's
+reference frame or over the original video.
+
+```
+python src/main.py --replay <DATA>/eth_ucy/zara1/crowds_zara01.txt --replay-flip-y
+```
+
+The data is not included. [docs/REPLAY.md](docs/REPLAY.md) explains where to get it, how to cite it,
+every option, and the known limits.
+
 ## With Max
 
 **What you need:**
@@ -96,15 +111,19 @@ The full tables, and the alternative AKAI MIDIMIX mapping, are in [docs/CONTROLS
 | [docs/OSC.md](docs/OSC.md) | every OSC address with its range, plus the control input on UDP 7500 |
 | [docs/CONTROLS.md](docs/CONTROLS.md) | keyboard, mouse, command line, MPK mini 3, MIDIMIX, troubleshooting |
 | [docs/MAX_SETUP.md](docs/MAX_SETUP.md) | the PLAUD device routes, the prior~ edits, the `shoal_fx` and `shoal_gran` patches |
+| [docs/REPLAY.md](docs/REPLAY.md) | real-data sonification: data sources and citations, setup, `--replay` options, views, events, limits |
 | [docs/IDEAS.md](docs/IDEAS.md) | known limitations and future work |
 
 ## Repository layout
 
 ```
 requirements.txt     pinned Python dependencies
+requirements-video.txt  optional: the replay video view (adds OpenCV)
 src/
   main.py            entry point: window, main loop, inputs
   aquarium_boids/    simulation, descriptors, OSC, MIDI, rendering
+    replay/          real-data replay: loader, interpolation, calibration, events, camera, video
+tests/               offline tests for the replay (python -m unittest discover -s tests)
   tools/             send_control_test.py (test controls on UDP 7500)
 max/
   shoal_fx.maxpat    predator kick + spectral shake + reverb
