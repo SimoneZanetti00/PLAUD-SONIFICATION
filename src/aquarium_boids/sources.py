@@ -281,9 +281,11 @@ class ReplaySource:
             return f"{head} | ACTIVE z {self.detector.peak_z:.1f} strength {self.detector.strength() / 3:.2f}"
         return f"{head} | z {self.detector.z:+.1f}"
 
-    def caption(self) -> str:
-        """Scene, citation and data time, e.g. "... zara1 - real trajectories (UCY: Lerner et al. 2007)   01:23 / 06:00"."""
-        return f"{self.title}   {mmss(self.clock.t - self.clock.start)} / {mmss(self.clock.end - self.clock.start)}"
+    def caption(self, extra: str = "") -> str:
+        """Scene, citation, optional extra credit and data time, e.g.
+        "... zara1 - real trajectories (UCY: Lerner et al. 2007)   01:23 / 06:00"."""
+        return (f"{self.title}{extra}   "
+                f"{mmss(self.clock.t - self.clock.start)} / {mmss(self.clock.end - self.clock.start)}")
 
     def speed_reference(self) -> float:
         """The calibrated max_speed (p95) in data units per second, e.g. m/s."""
