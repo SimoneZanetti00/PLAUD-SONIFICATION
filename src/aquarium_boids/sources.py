@@ -6,6 +6,7 @@ ReplaySource moves the same Boid objects along recorded trajectories (--replay F
 """
 from __future__ import annotations
 
+import bisect
 import zlib
 from pathlib import Path
 
@@ -41,10 +42,32 @@ def scene_name(path: str | Path, fmt: str) -> tuple[str, str]:
     return stem, "CSV"
 
 
+# Who recorded the data: short form for the caption, long form for the HUD.
+ETH_CITATION = ("ETH: Pellegrini et al. 2009",
+                "ETH (BIWI): Pellegrini, Ess, Schindler & van Gool, You'll Never Walk Alone, ICCV 2009")
+UCY_CITATION = ("UCY: Lerner et al. 2007",
+                "UCY: Lerner, Chrysanthou & Lischinski, Crowds by Example, Eurographics 2007")
+BOTH_CITATION = ("ETH/UCY: Lerner et al. 2007 / Pellegrini et al. 2009",
+                 f"{UCY_CITATION[1]} / {ETH_CITATION[1]}")
+
+
+def scene_citation(path: str | Path, fmt: str) -> tuple[str, str]:
+    """(short, long) citation of the dataset a file comes from; ("CSV", file name) for other files."""
+    stem = Path(path).stem
+    if resolve_format(path, fmt) != "eth-ucy":
+        return "CSV", f"{Path(path).name} (CSV)"
+    if stem.startswith("biwi_"):
+        return ETH_CITATION
+    if stem in ETH_UCY_SCENES:
+        return UCY_CITATION
+    return BOTH_CITATION
+
+
 def scene_title(path: str | Path, fmt: str) -> str:
-    """Window title for a replay, e.g. "PLAUD-SONIFICATION - zara1 - real trajectories (ETH/UCY)"."""
-    scene, label = scene_name(path, fmt)
-    return f"PLAUD-SONIFICATION - {scene} - real trajectories ({label})"
+    """Window title for a replay, with the scene's own source like the caption, e.g.
+    "PLAUD-SONIFICATION - zara1 - real trajectories (UCY: Lerner et al. 2007)"."""
+    scene, _ = scene_name(path, fmt)
+    return f"PLAUD-SONIFICATION - {scene} - real trajectories ({scene_citation(path, fmt)[0]})"
 
 
 def mmss(seconds: float) -> str:
@@ -144,6 +167,9 @@ class ReplaySource:
         self.max_agents = max_agents
         self.title = scene_title(path, fmt)
         self.scene, self.source_label = scene_name(path, fmt)
+        self.citation, self.reference = scene_citation(path, fmt)
+        self.unit = "m" if resolve_format(path, fmt) == "eth-ucy" else "unit"
+        self.transform = transform  # data units <-> world px, for the metric grid of the data look
         self.loop = loop
         self.max_population = dataset.max_population
         self.calibration = calibrate_speed_force(self.trajectories, speed, max_agents)
@@ -192,8 +218,25 @@ class ReplaySource:
         return self.agents
 
     def caption(self) -> str:
-        """Title plus data time since the start of the file, e.g. "... (ETH/UCY)   01:23 / 06:00"."""
+        """Scene, citation and data time, e.g. "... zara1 - real trajectories (UCY: Lerner et al. 2007)   01:23 / 06:00"."""
         return f"{self.title}   {mmss(self.clock.t - self.clock.start)} / {mmss(self.clock.end - self.clock.start)}"
+
+    def speed_reference(self) -> float:
+        """The calibrated max_speed (p95) in data units per second, e.g. m/s."""
+        return self.calibration.max_speed * 60.0 / self.speed / self.transform.scale
+
+    def overlay(self, history: float = 10.0) -> list[tuple[Boid, str, list[tuple[float, float]]]]:
+        """(agent, track id, path) per agent; the path is the agent's recorded keyframes of the last
+        `history` seconds of data time plus its current position, in world px (like tracking output)."""
+        t = self.clock.t
+        out = []
+        for boid, piece in zip(self.agents, self._pieces):
+            lo = bisect.bisect_left(piece.t, t - history)
+            hi = bisect.bisect_right(piece.t, t)
+            path = list(zip(piece.x[lo:hi], piece.y[lo:hi]))
+            path.append((boid.position.x, boid.position.y))
+            out.append((boid, piece.track_id, path))
+        return out
 
     def hud_lines(self, controls: RuntimeControls, descriptors: dict[str, float]) -> list[str]:
         """HUD text for replay mode (classic look, thermal data mode): no boid weights, no MIDI."""
@@ -205,7 +248,7 @@ class ReplaySource:
             f"{state} | speed x{self.speed:g} | loop {'on' if self.loop else 'off'} | SPACE pause | R restart",
             f"people on screen {len(self.agents)} (most at once in the file {self.max_population}) | "
             f"fish_count {d('fish_count', 0):.2f}{' (normalised)' if self.normaliser is not None else ''}",
-            f"density_fader UP/DOWN: {controls.density_fader:.2f} | section 1-6: {controls.section_name}",
+            f"source: {self.reference}",
             f"predator_amount {controls.predator_amount:.2f} (UDP) | mouse right = predator rings, no force on the data",
             f"OSC out: {OSC_HOST}:{OSC_PORT} | plain out: {PLAIN_UDP_PORT} | control in: {CONTROL_PORT}",
             f"mean_speed {d('mean_speed', 0):.2f} | energy {d('energy', 0):.2f} | density {d('density', 0):.2f} | "

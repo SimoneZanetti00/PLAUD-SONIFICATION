@@ -24,9 +24,13 @@ from aquarium_boids.sources import ReplaySource, mmss, scene_title  # noqa: E402
 class Titles(unittest.TestCase):
     def test_eth_ucy_scene_names(self):
         self.assertEqual(scene_title("C:/x/crowds_zara01.txt", "auto"),
-                         "PLAUD-SONIFICATION - zara1 - real trajectories (ETH/UCY)")
-        self.assertEqual(scene_title("biwi_hotel.txt", "eth-ucy"), "PLAUD-SONIFICATION - hotel - real trajectories (ETH/UCY)")
-        self.assertEqual(scene_title("my_scene.txt", "auto"), "PLAUD-SONIFICATION - my_scene - real trajectories (ETH/UCY)")
+                         "PLAUD-SONIFICATION - zara1 - real trajectories (UCY: Lerner et al. 2007)")
+        self.assertEqual(scene_title("students001.txt", "auto"),
+                         "PLAUD-SONIFICATION - univ (students001) - real trajectories (UCY: Lerner et al. 2007)")
+        self.assertEqual(scene_title("biwi_hotel.txt", "eth-ucy"),
+                         "PLAUD-SONIFICATION - hotel - real trajectories (ETH: Pellegrini et al. 2009)")
+        self.assertEqual(scene_title("my_scene.txt", "auto"), "PLAUD-SONIFICATION - my_scene - real trajectories "
+                         "(ETH/UCY: Lerner et al. 2007 / Pellegrini et al. 2009)")
         self.assertEqual(scene_title("walk.csv", "auto"), "PLAUD-SONIFICATION - walk - real trajectories (CSV)")
 
     def test_mmss(self):

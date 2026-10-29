@@ -73,6 +73,13 @@ class Transform:
             dy = self.span_y - dy
         return ((x - self.origin_x) * self.scale + self.offset_x, dy * self.scale + self.offset_y)
 
+    def to_data(self, wx: float, wy: float) -> tuple[float, float]:
+        """Inverse of apply: world px -> data units (e.g. metres)."""
+        dy = (wy - self.offset_y) / self.scale
+        if self.flip_y:
+            dy = self.span_y - dy
+        return ((wx - self.offset_x) / self.scale + self.origin_x, dy + self.origin_y)
+
 
 def id_sort_key(track_id: str) -> tuple[int, int | str]:
     """Numeric ids in numeric order (2 before 10), then the other ids as text."""

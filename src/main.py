@@ -39,6 +39,7 @@ from aquarium_boids.markov import LAYERS, SECTIONS, SymbolicGenerator
 from aquarium_boids.midi_in import MidiControllerInput
 from aquarium_boids.osc_io import OscSender
 from aquarium_boids.render import ClassicRenderer, Display, ThermalRenderer
+from aquarium_boids.render_data import DataRenderer
 from aquarium_boids.replay.loader import FORMATS as REPLAY_FORMATS
 from aquarium_boids.sources import ReplaySource, SimulationSource
 
@@ -153,6 +154,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"most agents on screen at once (default {BOID_COUNT})",
     )
     replay.add_argument(
+        "--replay-look", choices=("data", "thermal"), default="data",
+        help="data (default): grid, scale bar, paths, speed colours, I = id labels; thermal: people in the "
+        "thermal look; --classic overrides both",
+    )
+    replay.add_argument(
         "--replay-normalise", action="store_true",
         help="map each descriptor to this file's p5..p95 range (fish_count: / most agents on screen)",
     )
@@ -221,6 +227,8 @@ def main(argv: list[str] | None = None) -> None:
     renderer = (
         ClassicRenderer(font, **replay_look)
         if args.classic
+        else DataRenderer(font, replay, mode=args.mode)
+        if replay is not None and args.replay_look == "data"
         else ThermalRenderer(
             font,
             mode=args.mode,
