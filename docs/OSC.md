@@ -59,6 +59,21 @@ All values are floats unless noted.
 | `/pad/kick` | no arguments | MPK pad 1 | one kick now |
 | `/pad/sample` | int 1–4 | MPK pads 5–8 | play slice 1–4 of the grain source |
 
+## Replay mode (`--replay`)
+
+The addresses, ranges and rates are the same. What changes is what the values describe: people
+in a recorded scene instead of fish ([REPLAY.md](REPLAY.md)).
+
+| Address | In replay mode |
+|---|---|
+| `/plaud/*`, `/gran/*`, `/aquarium/*` | computed from the people on screen. `mean_speed` and `energy` are calibrated to the file (its p95 speed and acceleration). With `--replay-normalise` every descriptor is mapped to the file's p5–p95 range and `fish_count` = people on screen / most at once in the file |
+| `/gran/fish_x` | one value per person (first 32), each person keeping the same index while present; the list length follows the scene |
+| `/fx/predator`, `/fx/predator_strength` | also sent for **acceleration events** in the data (onset 1, release 0). The strength is 0.3–1.0 (`0.3 + 0.7 × clip((peak z − 3) / 2.5)`), so every onset is audible. The mouse predator and `predator_amount` on UDP 7500 still work as before |
+| `/mix/*`, `/pad/*`, `/mix/transpose` | not sent: MIDI is off in replay mode |
+| `/music/*` | still sent, but the sequence differs from a simulation run (the replay draws no random numbers) |
+
+The views (map, camera, video) are display only: a replay sends exactly the same OSC in all three.
+
 ## Legacy streams (still sent, not used by SynthFish)
 
 Kept so that nothing that listened to them before breaks.

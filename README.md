@@ -1,148 +1,202 @@
-# SynthFish
+# PLAUD-SONIFICATION
 
-A flock of simulated fish performs **PLAUD**, a DDSP neural synthesis model trained on about
-30 minutes of recordings by the musician Rafael. Nobody plays notes or writes prompts. The fish
-swim, and their collective behaviour (where the flock is, how agitated it is, when a predator
-scatters it) drives the model live. The performer shapes the ecosystem (food, predators,
-cohesion, number of fish), and the sound follows the flock.
+Real collective movement, turned into sound. Recorded trajectories of crowds (pedestrians today,
+animal groups next) are measured frame by frame (where the group is, how spread out, how fast,
+how agitated, when something suddenly happens) and these measures play **PLAUD**, a neural
+(DDSP) synthesis model, together with a per-person granulator in Max/MSP. Nobody plays notes:
+the crowd does.
 
-SynthFish is the name used in the demo video; the repository is called Fishmus, and the project started as Generative Boids / Musish at the Barcelona workshop.
+**Demo video:** _coming soon_ <!-- add the link or a GIF here -->
 
-**Demo video:** <https://youtu.be/3ueGfejkkj8>
+![zara1 replayed over its original video](docs/img/replay_video_zara1.png)
+
+*The zara1 scene (UCY, Lerner et al. 2007) over its original video (OpenTraj, Amirian et al. 2020).
+Each dot is a recorded pedestrian, coloured by speed, with the last 10 s of its path.*
 
 ## How it works
 
 ```
- boids simulation (Python / pygame)
-   |  alignment, cohesion, separation, noise, food, predator
+ trajectory file: ETH/UCY pedestrians, or any CSV of positions (id, frame, x, y)
+   |  metres -> screen, smooth motion at 60 fps (spline), per-dataset calibration
    v
- flock descriptors, 0-1, ~15 Hz
-   |  position, spread, speed, energy, density, coherence, fish count, per-fish x
+ crowd descriptors, 0-1, ~15 Hz                      + acceleration events
+   |  position, spread, speed, agitation, density,     (sudden agitation in the data)
+   |  direction coherence, count, per-person x
    v
  OSC over UDP -> 127.0.0.1:7400
    v
  Max/MSP
-   |- PLAUD (nn~)        flock position steers PLAUD's prior territory;
-   |                     fish count -> loudness, agitation -> latent L2
-   |- max/shoal_fx       predator events -> a kick (with reverb) + a spectral shake of PLAUD
-   '- max/shoal_gran     each fish is a grain voice, panned by its x position
-
- AKAI MPK mini 3 (MIDI) -> live control of the flock and of the mix
+   |- PLAUD (nn~)       crowd position steers PLAUD's prior; count -> loudness; agitation -> latent L2
+   |- max/shoal_fx      acceleration events -> a kick (with reverb) + a spectral shake of PLAUD
+   '- max/shoal_gran    each person is a grain voice, panned by its x position
 ```
 
-## Quick start (no Max needed)
+The picture shows the people on a metric map, on the scene's reference frame, or over the
+original video. The sound does not depend on the picture.
 
-Needs Python 3.13 (tested on Windows).
+## Origin
+
+PLAUD-SONIFICATION is built on **SynthFish** ([github.com/AleMurru/Musish](https://github.com/AleMurru/Musish)),
+in which a flock of simulated fish performs PLAUD
+([SynthFish demo video](https://youtu.be/3ueGfejkkj8)).
+- SynthFish is by Simone Zanetti and Alessandro Murru, with the musician Rafael, who made the
+  music, the live performance and the recordings PLAUD was trained on.
+- It was made at the Generative Music AI Workshop (UPF / MTG with The Sound of AI), Barcelona,
+  July 2026.
+- **PLAUD** (Performative Latents for Adaptive Unsupervised DDSP) is by Błażej Kotowski.
+
+This repository replaces the simulated fish with real trajectories. The fish simulation is still
+available ([simulation mode](#simulation-mode-synthfish)).
+
+## Quick start (Windows)
+
+Needs Python 3.13 and Git. Max is optional: without it everything runs, and the OSC packets
+simply go unanswered.
+
+**1. Clone**
+
+```
+git clone https://github.com/SimoneZanetti00/PLAUD-SONIFICATION.git
+cd PLAUD-SONIFICATION
+```
+
+**2. Create the Python environments.** The base one runs everything except the video view. The
+video one adds OpenCV for the video view. You need only one of them.
 
 ```
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-python src/main.py
 ```
 
-Without Max the simulation runs normally, and the OSC packets simply go unanswered.
+```
+python -m venv .venv-video
+.venv-video\Scripts\activate
+pip install -r requirements-video.txt
+```
 
-| Input | Action |
+**3. Get the data.** None of it is included. Download the ETH/UCY trajectory files, and for the
+camera and video views the OpenTraj frames, homographies and videos, into any folder outside
+the repository (called `<DATA>` below). Follow [docs/REPLAY.md, "Getting the files"](docs/REPLAY.md#getting-the-files).
+
+**4. Run.** Replace `<DATA>` with your folder.
+
+```
+:: map view (base or video environment)
+python src\main.py --replay <DATA>\eth_ucy\zara1\crowds_zara01.txt --replay-flip-y
+
+:: camera view: the people on the scene's reference frame
+python src\main.py --replay <DATA>\eth_ucy\zara1\crowds_zara01.txt --replay-view camera --replay-camera-dir <DATA>\opentraj
+
+:: video view (video environment): the people over the original video
+python src\main.py --replay <DATA>\eth_ucy\hotel\biwi_hotel.txt --replay-view video --replay-camera-dir <DATA>\opentraj
+```
+
+To avoid repeating the last option, set the folder once with `set PLAUD_OPENTRAJ_DIR=<DATA>\opentraj`.
+Other scenes: `zara2`, `univ` (map view), `hotel`; the options are described in
+[docs/REPLAY.md](docs/REPLAY.md#command-line).
+
+### Simulation mode (SynthFish)
+
+Without `--replay` the original fish simulation runs, unchanged: `python src\main.py`. It is played
+with the mouse, the keyboard and an AKAI MPK mini 3 or MIDIMIX ([docs/CONTROLS.md](docs/CONTROLS.md)).
+
+## Max setup
+
+The sound is made in Max 9:
+- the **PLAUD device** with its trained model (`nn~`) receives `/plaud/*`;
+- `max/shoal_fx.maxpat` receives `/fx/*` (the kick and the shake);
+- `max/shoal_gran.maxpat` receives `/gran/*` (one grain voice per person).
+
+**Not included:** the PLAUD device, the PLAUD model and all audio. Put your own `shoal_kick.wav`
+and `shoal_gran.aiff` next to the patches.
+
+The routes and the edits to the PLAUD device are in [docs/MAX_SETUP.md](docs/MAX_SETUP.md). Every
+OSC address, including what changes in replay mode, is in [docs/OSC.md](docs/OSC.md).
+
+## Controls (replay mode)
+
+| Input | Effect |
 |---|---|
-| mouse left (hold) | food: the fish are attracted to the pointer |
-| mouse right (hold) | predator: the fish flee from the pointer; Max receives a scare event |
-| `-` / `=` | fewer / more fish |
-| H | art view (no text) / data view (HUD with descriptors) |
-| T / G / P | trails / glow / drifting particles on or off |
-| F11 | fullscreen on/off |
-| ESC | quit |
+| `SPACE` | pause / resume the data (and the video) |
+| `R` | restart the file |
+| `H` | HUD on / off: scene, source, data time, people on screen, events, descriptors |
+| `I` | track id labels on / off |
+| mouse left / right | draw food / predator rings; the predator still triggers the kick in Max. Nobody moves |
+| `F11` | fullscreen on / off |
+| `ESC` | quit |
 
-Options:
-- `--fullscreen`: start fullscreen.
-- `--classic`: the original flat look.
-- `--size 1920x1080`: set the window size; the simulation itself is always 1200x750.
+MIDI is off in replay mode; the UDP control port 7500 stays open. All keys, both modes and the
+MIDI controllers are in [docs/CONTROLS.md](docs/CONTROLS.md).
 
-All keys and options are listed in [docs/CONTROLS.md](docs/CONTROLS.md).
-
-## Real-data sonification
-
-The same pipeline can sonify **real crowds** instead of simulated fish. `--replay` moves the agents
-along recorded pedestrian trajectories (the ETH/UCY datasets, or any CSV of positions); the
-descriptors, OSC, PLAUD and the Max patches stay the same. Events in the data (sudden agitation)
-trigger the predator kick, and the picture can show the people on a metric map, on the scene's
-reference frame or over the original video.
+## Repository layout
 
 ```
-python src/main.py --replay <DATA>/eth_ucy/zara1/crowds_zara01.txt --replay-flip-y
+requirements.txt        pinned Python dependencies (pygame, python-osc)
+requirements-video.txt  optional: adds OpenCV for the video view
+src/
+  main.py               entry point: command line, window, main loop, inputs
+  aquarium_boids/       simulation and replay sources, descriptors, OSC, MIDI, rendering
+    replay/             trajectory loader, interpolation, calibration, events, camera, video
+  tools/                send_control_test.py (test controls on UDP 7500)
+max/
+  shoal_fx.maxpat       predator / event kick + spectral shake + reverb
+  shoal_gran.maxpat     per-person granulator, slice player, source menu
+docs/                   REPLAY, ARCHITECTURE, OSC, CONTROLS, MAX_SETUP, IDEAS; img/
+tests/                  offline tests: python -m unittest discover -s tests
 ```
-
-The data is not included. [docs/REPLAY.md](docs/REPLAY.md) explains where to get it, how to cite it,
-every option, and the known limits.
-
-## With Max
-
-**What you need:**
-- Max 9.
-- The `nn~` external.
-- A PLAUD device and a trained PLAUD model. PLAUD is by Błażej Kotowski and is **not included**
-  in this repository.
-
-**Setup, in three steps:**
-1. In the PLAUD device, add `[udpreceive 7400]` with one `route` for each address family: `/plaud/*`, `/fx/*`, `/gran/*`, `/mix/*`, `/pad/*`.
-2. In `prior~`, connect the flock position to the territory. Also switch off prior~'s own random walk.
-3. Open `max/shoal_fx.maxpat` (predator kick, spectral shake and reverb) and `max/shoal_gran.maxpat` (one grain voice per fish).
-
-No audio is shipped. Put your own `shoal_kick.wav` and `shoal_gran.aiff` next to the patches. To switch sources live, put your own sounds in `max/grains/` and pick them from the menu.
-
-The exact routes, sends and prior~ edits are in [docs/MAX_SETUP.md](docs/MAX_SETUP.md). Every OSC address is in [docs/OSC.md](docs/OSC.md).
-
-## Live control: AKAI MPK mini 3
-
-Use **bank A**; the pads work in either pad mode (NOTE or PROG CHANGE). The mapping profile is chosen
-automatically from the MIDI device name.
-- **Knobs:** grain length, agitation, cohesion, number of fish, grain gain, slice gain, PLAUD wet, PLAUD dry.
-- **Pads:** kick, scare, food, calm, and four slices of the grain source.
-- **Joystick:** steers a food point around the screen; at rest, no food.
-- **Keys:** transpose the grain source by −12…+12 semitones (latched until the next key).
-
-The full tables, and the alternative AKAI MIDIMIX mapping, are in [docs/CONTROLS.md](docs/CONTROLS.md).
 
 ## Documentation
 
 | Page | Contents |
 |---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | modules, the frame loop, the boid forces, what each descriptor measures, how it reaches the sound |
-| [docs/OSC.md](docs/OSC.md) | every OSC address with its range, plus the control input on UDP 7500 |
-| [docs/CONTROLS.md](docs/CONTROLS.md) | keyboard, mouse, command line, MPK mini 3, MIDIMIX, troubleshooting |
+| [docs/REPLAY.md](docs/REPLAY.md) | data sources and citations, getting the files, every replay option, views, calibration, events, known limits |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | modules, the frame loop, simulation vs replay source, descriptors, how they reach the sound |
+| [docs/OSC.md](docs/OSC.md) | every OSC address with its range, replay-mode differences, the control input on UDP 7500 |
+| [docs/CONTROLS.md](docs/CONTROLS.md) | keyboard, mouse, command line, replay mode, MPK mini 3, MIDIMIX |
 | [docs/MAX_SETUP.md](docs/MAX_SETUP.md) | the PLAUD device routes, the prior~ edits, the `shoal_fx` and `shoal_gran` patches |
-| [docs/REPLAY.md](docs/REPLAY.md) | real-data sonification: data sources and citations, setup, `--replay` options, views, events, limits |
-| [docs/IDEAS.md](docs/IDEAS.md) | known limitations and future work |
+| [docs/IDEAS.md](docs/IDEAS.md) | ideas and future work from the SynthFish phase |
 
-## Repository layout
+## Data sources and citations
 
-```
-requirements.txt     pinned Python dependencies
-requirements-video.txt  optional: the replay video view (adds OpenCV)
-src/
-  main.py            entry point: window, main loop, inputs
-  aquarium_boids/    simulation, descriptors, OSC, MIDI, rendering
-    replay/          real-data replay: loader, interpolation, calibration, events, camera, video
-tests/               offline tests for the replay (python -m unittest discover -s tests)
-  tools/             send_control_test.py (test controls on UDP 7500)
-max/
-  shoal_fx.maxpat    predator kick + spectral shake + reverb
-  shoal_gran.maxpat  per-fish granulator, slice player, source menu
-docs/                the pages listed above
-```
+The datasets are **not redistributed** here. Get them from their sources and cite them when you use
+this project:
+- **UCY** (zara1, zara2, univ): A. Lerner, Y. Chrysanthou, D. Lischinski, *Crowds by Example*,
+  Computer Graphics Forum, 2007.
+- **ETH** (eth, hotel): S. Pellegrini, A. Ess, K. Schindler, L. van Gool, *You'll never walk alone*,
+  ICCV 2009.
+- **Trajectory files:** the Social GAN splits as distributed by Trajectron++.
+- **Reference frames, homographies and videos:** OpenTraj (J. Amirian et al., ACCV 2020).
+
+Terms, pinned versions and the full references: [docs/REPLAY.md, "Data sources and citations"](docs/REPLAY.md#data-sources-and-citations).
+The screenshot above contains a frame of the UCY zara01 video, shown with its credit.
+
+## Status and next steps
+
+**Working:**
+- pedestrian replay from ETH/UCY and from any CSV, on Windows, at 60 fps with up to 100 people;
+- per-dataset calibration, so `mean_speed` and agitation mean the same 0–1 in every scene;
+- acceleration events that trigger the kick;
+- map, camera and video views;
+- the original fish simulation, unchanged.
+
+**Known limits** (details in [docs/REPLAY.md](docs/REPLAY.md#known-limits)):
+- the `eth` scene moves about twice too fast;
+- zara1 needs an image correction in the camera and video views;
+- camera and video views exist for zara1 and hotel only;
+- tested on Windows only.
+
+**Next:**
+- animal datasets (fish schools, bird flocks, insects), with their own calibration;
+- our own recordings, tracked from video;
+- Max presets per dataset.
 
 ## Credits
 
-- Simone Zanetti and Alessandro Murru (system design and development); Rafael (music, live performance, training recordings).
+- Simone Zanetti and Alessandro Murru (system design and development); Rafael (music, live
+  performance, training recordings). SynthFish: [github.com/AleMurru/Musish](https://github.com/AleMurru/Musish).
 - PLAUD (Performative Latents for Adaptive Unsupervised DDSP) by Błażej Kotowski.
-- Developed at the Generative Music AI Workshop (UPF / MTG with The Sound of AI), Barcelona, July 2026.
-
-## Limitations
-
-- Tested on Windows only.
-- The PLAUD device, the PLAUD model and all audio assets are not included. Without them, the Max
-  side cannot be run as shown in the demo.
-- The Max patches were built for standalone Max 9, not for Max for Live.
+- Data: the ETH and UCY authors, Trajectron++ and OpenTraj (see above).
 
 ## License
 
