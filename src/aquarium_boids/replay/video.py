@@ -11,6 +11,9 @@ Decoding runs in a background thread: the main thread asks for (frame, size) and
 finished frame (OpenCV releases the GIL while decoding and resizing). Forward steps up to
 MAX_GRAB frames are decoded sequentially (cheap grabs); anything else (restart, loop wrap, big
 jumps) is a seek, which can take ~0.1-0.3 s on zara01: meanwhile the previous frame stays up.
+
+Looks: "normal" (dimmed colour) or "dark" (grey and darker, with what moves since the previous
+decoded frame brought back in colour, so the walking people stand out from the street).
 """
 from __future__ import annotations
 
@@ -18,6 +21,12 @@ import threading
 from pathlib import Path
 
 MAX_GRAB = 150  # forward jumps up to this many frames are decoded, not seeked (6 s at 25 fps)
+LOOKS = ("normal", "dark")
+DARK_LEVEL = 0.32  # dark look: grey street at this brightness
+MOTION_MAX_GAP = 4  # frames: the motion mask needs the previous decoded frame to be this close
+MOTION_THRESHOLD = 7  # grey levels of change below this are noise (compression, light flicker)
+MOTION_GAIN = 14.0  # how fast the mask reaches full colour above the threshold
+MOTION_GROW = 11  # px: the mask is dilated by this square, so whole bodies (not only their edges) keep colour
 INSTALL_HINT = "pip install -r requirements-video.txt (OpenCV)"
 
 
@@ -47,9 +56,12 @@ class VideoFrames:
         self.size = (int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
         self.dim = dim
         self._pos = 0  # index of the next frame the capture will decode
-        self._want: tuple[int, tuple[int, int]] | None = None
-        self._done: tuple[int, tuple[int, int]] | None = None
-        self._latest: tuple[int, tuple[int, int], bytes] | None = None
+        self._want: tuple[int, tuple[int, int], str] | None = None
+        self._done: tuple[int, tuple[int, int], str] | None = None
+        self._latest: tuple[int, tuple[int, int], str, bytes] | None = None
+        self._raw: tuple[int, object] | None = None  # (index, last decoded frame): a look change reuses it
+        self._gray_now: tuple[int, object] | None = None  # (index, grey) of the last frame seen by _dark
+        self._gray_before: tuple[int, object] | None = None  # (index, grey) of the frame before it
         self.seeks = 0
         self._lock = threading.Lock()
         self._wake = threading.Condition(self._lock)
@@ -63,9 +75,11 @@ class VideoFrames:
         """round(fps x data time), clamped to the video."""
         return max(0, min(self.count - 1, round(self.fps * data_time)))
 
-    def request(self, index: int, size: tuple[int, int]) -> None:
-        """Ask for frame `index` scaled to `size`; returns at once (threaded) or after decoding."""
-        want = (index, (int(size[0]), int(size[1])))
+    def request(self, index: int, size: tuple[int, int], look: str = "normal") -> None:
+        """Ask for frame `index` scaled to `size` in `look`; returns at once (threaded) or after decoding."""
+        if look not in LOOKS:
+            raise ValueError(f"unknown look {look!r}")
+        want = (index, (int(size[0]), int(size[1])), look)
         if self._thread is None:
             if want != self._done:
                 self._latest = (*want, self._decode(*want))
@@ -76,8 +90,8 @@ class VideoFrames:
                 self._want = want
                 self._wake.notify()
 
-    def latest(self) -> tuple[int, tuple[int, int], bytes] | None:
-        """(index, size, RGB bytes) of the newest finished frame, or None before the first one."""
+    def latest(self) -> tuple[int, tuple[int, int], str, bytes] | None:
+        """(index, size, look, RGB bytes) of the newest finished frame, or None before the first one."""
         with self._lock:
             return self._latest
 
@@ -102,7 +116,21 @@ class VideoFrames:
                 self._latest = (*want, data)
                 self._done = want
 
-    def _decode(self, index: int, size: tuple[int, int]) -> bytes:
+    def _decode(self, index: int, size: tuple[int, int], look: str = "normal") -> bytes:
+        cv2 = self._cv2
+        img = self._read(index)
+        if look == "dark":
+            img = self._dark(index, img)
+        if (img.shape[1], img.shape[0]) != size:
+            img = cv2.resize(img, size, interpolation=cv2.INTER_LINEAR)
+        if look == "normal" and self.dim < 255:
+            img = cv2.convertScaleAbs(img, alpha=self.dim / 255.0)
+        return cv2.cvtColor(img, cv2.COLOR_BGR2RGB).tobytes()
+
+    def _read(self, index: int):
+        """The raw frame `index` (BGR, full size): reused, decoded forward, or seeked."""
+        if self._raw is not None and self._raw[0] == index:
+            return self._raw[1]
         cv2, cap = self._cv2, self._cap
         step = index - self._pos
         if 0 <= step <= MAX_GRAB:
@@ -115,11 +143,25 @@ class VideoFrames:
         self._pos = index + 1
         if not ok:
             img = self._blank()
-        if (img.shape[1], img.shape[0]) != size:
-            img = cv2.resize(img, size, interpolation=cv2.INTER_LINEAR)
-        if self.dim < 255:
-            img = cv2.convertScaleAbs(img, alpha=self.dim / 255.0)
-        return cv2.cvtColor(img, cv2.COLOR_BGR2RGB).tobytes()
+        self._raw = (index, img)
+        return img
+
+    def _dark(self, index: int, img):
+        """Grey, darker street; pixels that changed since the previous decoded frame keep their colour."""
+        import numpy as np  # noqa: PLC0415  (comes with OpenCV)
+        cv2 = self._cv2
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        base = cv2.cvtColor(cv2.convertScaleAbs(gray, alpha=DARK_LEVEL), cv2.COLOR_GRAY2BGR)
+        if self._gray_now is None or self._gray_now[0] != index:  # a new frame: shift the pair
+            self._gray_before, self._gray_now = self._gray_now, (index, gray)
+        prev = self._gray_before
+        if prev is None or not 0 < index - prev[0] <= MOTION_MAX_GAP:
+            return base
+        diff = cv2.GaussianBlur(cv2.absdiff(gray, prev[1]), (0, 0), 2.5)
+        mask = np.clip((diff.astype(np.float32) - MOTION_THRESHOLD) * (MOTION_GAIN / 255.0), 0.0, 1.0)
+        mask = cv2.dilate(mask, np.ones((MOTION_GROW, MOTION_GROW), np.uint8))[..., None]
+        out = base.astype(np.float32) * (1.0 - mask) + img.astype(np.float32) * mask
+        return out.astype(np.uint8)
 
     def _blank(self):
         import numpy as np  # noqa: PLC0415  (comes with OpenCV)

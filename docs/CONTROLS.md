@@ -48,6 +48,9 @@ UDP control port 7500 stays open. The keys change meaning like this:
 | `SPACE` | pause / resume the data (the video view holds its frame) |
 | `R` | restart the file from the beginning |
 | `I` | data look: track id labels on / off |
+| `N` | data look: social graph on / off (lines between people closer than 2 m; thick and bright when they walk together) |
+| `L` | data look: long exposure on / off (walked routes build up as light, fading over minutes) |
+| `V` | data look, video view: video normal → dark (grey, moving people in colour) → off |
 | `H` | data look and thermal look: HUD on / off |
 | mouse left / right | draw the food / predator rings; the predator still sends `/fx/predator` to Max. Neither moves anyone |
 | `-` / `=`, weight keys `A`/`Z`, `S`/`X`, `D`/`C`, `N`/`M` | no effect (the HUD shows the people on screen) |

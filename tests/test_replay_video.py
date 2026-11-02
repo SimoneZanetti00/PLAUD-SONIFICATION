@@ -78,13 +78,13 @@ class Frames(unittest.TestCase):
         v = VideoFrames(self.path, threaded=False)
         for k in (3, 4, 10, 40):  # forward: decoded in order, no seek
             v.request(k, (W, H))
-            index, size, data = v.latest()
-            self.assertEqual((index, size), (k, (W, H)))
+            index, size, look, data = v.latest()
+            self.assertEqual((index, size, look), (k, (W, H), "normal"))
             self.assertAlmostEqual(first_pixel(data), grey(k), delta=3)
         self.assertEqual(v.seeks, 0)
         v.request(2, (W, H))  # backwards (R restart, loop wrap): a seek
         self.assertEqual(v.seeks, 1)
-        self.assertAlmostEqual(first_pixel(v.latest()[2]), grey(2), delta=3)
+        self.assertAlmostEqual(first_pixel(v.latest()[3]), grey(2), delta=3)
         v.request(2, (W, H))  # same request again: nothing to do
         self.assertEqual(v.seeks, 1)
         v.close()
@@ -92,7 +92,7 @@ class Frames(unittest.TestCase):
     def test_scaled_and_dimmed(self):
         v = VideoFrames(self.path, dim=128, threaded=False)
         v.request(30, (32, 24))
-        index, size, data = v.latest()
+        index, size, look, data = v.latest()
         self.assertEqual(size, (32, 24))
         self.assertEqual(len(data), 32 * 24 * 3)
         self.assertAlmostEqual(first_pixel(data), grey(30) * 128 / 255, delta=3)
@@ -106,7 +106,7 @@ class Frames(unittest.TestCase):
         while (v.latest() is None or v.latest()[0] != 20) and time.time() < deadline:
             time.sleep(0.01)
         self.assertEqual(v.latest()[0], 20)
-        self.assertAlmostEqual(first_pixel(v.latest()[2]), grey(20), delta=3)
+        self.assertAlmostEqual(first_pixel(v.latest()[3]), grey(20), delta=3)
         v.close()
 
 

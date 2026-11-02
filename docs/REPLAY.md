@@ -193,7 +193,17 @@ It has three views:
 | `camera` | the scene's OpenTraj reference frame, dimmed | zara1 and hotel. People, paths, rings and labels are projected into the frame through its homography. No grid or scale bar (the perspective changes the scale). The frame is one still photo: the people in it are not the people in the data |
 | `video` | the scene's original video, dimmed, at frame round(25 × data time) | zara1 and hotel; needs OpenCV. Pause, `R`, loop and `--replay-speed` follow the data time. Decoding runs in a background thread; jumps (restart, loop) seek, and the previous frame stays up meanwhile |
 
-All views are display only: a replay sends exactly the same OSC in map, camera and video view.
+**Optional layers** (all views; off at start, so the look above is the default):
+
+| Key | Layer | What it shows |
+|---|---|---|
+| `N` | social graph | a thin line between two people closer than 2 m; when they walk together (heading within 30°, speed within 0.3 m/s, both moving) the line thickens and brightens from 2 s to 6 s of walking together |
+| `L` | long exposure | each person lays light along the way they walk (per distance, so standing adds nothing); it fades one grey level every 4 s of data time, so one pass stays visible about 1.5 min and a much-used route about 17 min: the street's habitual routes appear |
+| `V` | video look (video view) | normal → dark (grey, darker street; what moves since the previous frame keeps its colour) → off (people and layers on a plain background) |
+
+The layers follow the data time (pause holds them; `R` and a loop restart clear the timers). All
+views and layers are display only: a replay sends exactly the same OSC in map, camera and video
+view, with or without the layers.
 Measured frame rates are about 60 fps in a 1200x750 window and fullscreen, for all three views.
 
 **Thermal look** (`--replay-look thermal`). People as heads with a heading tick in the aquarium's
