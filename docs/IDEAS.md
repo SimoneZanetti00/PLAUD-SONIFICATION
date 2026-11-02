@@ -13,7 +13,7 @@ Nothing on this page is implemented. Items are grouped by area. Known limitation
 - **Latent L2** (`/plaud/temp`) never goes below 0.2.
 - **Unbounded keyboard weights.** The A/S/D/N keys have no upper limit; MIDI and UDP clip.
 - **MIDI choice.** MIDI falls back silently to the first input device. A `--midi-name` / `--no-midi` option would make the choice explicit.
-- **Port 7500.** If it is already taken, the program stops with an `OSError` instead of running without the control port.
+- **Port 7500.** Fixed: if it is already taken, the program prints a warning and runs without the UDP control input (it used to stop with an `OSError`).
 - **Fish can leave the screen.** There is no hard border: very strong forces can push fish off screen.
 
 ## Sound and PLAUD

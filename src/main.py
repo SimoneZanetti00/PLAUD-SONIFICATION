@@ -260,6 +260,18 @@ def replay_camera(args: argparse.Namespace):
     return camera, None
 
 
+def start_control_input(port: int) -> ControlReceiver:
+    """UDP control input. A busy port is a warning, not a crash: the app runs without it."""
+    receiver = ControlReceiver(port=port)
+    receiver.start()
+    if receiver.error is None:
+        print(f"Listening for Max/MIDIMIX controls on UDP {port}")
+    else:
+        print(f"[control] WARNING: cannot listen on UDP {port} ({receiver.error}). Continuing without "
+              f"control input on that port: is another copy of this app, or Max, already using it?")
+    return receiver
+
+
 def parse_size(text: str) -> tuple[int, int]:
     try:
         w, h = (int(part) for part in text.lower().split("x"))
@@ -301,9 +313,7 @@ def main(argv: list[str] | None = None) -> None:
     smoother = OnePoleSmoother(alpha=0.16)
     osc = OscSender(OSC_HOST, OSC_PORT)
     generator = SymbolicGenerator()
-    control_receiver = ControlReceiver(port=CONTROL_PORT)
-    control_receiver.start()
-    print(f"Listening for Max/MIDIMIX controls on UDP {CONTROL_PORT}")
+    control_receiver = start_control_input(CONTROL_PORT)
 
     midi_input = MidiControllerInput(
         device_name=MIDI_INPUT_NAME,

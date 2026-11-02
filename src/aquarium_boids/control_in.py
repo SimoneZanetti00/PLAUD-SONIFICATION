@@ -24,6 +24,9 @@ class ControlReceiver:
 
     Also accepted:
         density_fader 0.75;
+
+    If the port cannot be opened (e.g. another copy of the app, or Max, already uses it), start()
+    does not raise: `error` holds the reason and the receiver stays idle (drain() returns nothing).
     """
 
     def __init__(self, port: int = 7500, host: str = "127.0.0.1"):
@@ -33,12 +36,19 @@ class ControlReceiver:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._socket: socket.socket | None = None
+        self.error: str | None = None  # why start() could not listen, or None
 
     def start(self) -> None:
         if self._thread is not None:
             return
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._socket.bind((self.host, self.port))
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.bind((self.host, self.port))
+        except OSError as exc:  # port in use (WinError 10048 / EADDRINUSE), no permission, ...
+            sock.close()
+            self.error = str(exc)
+            return
+        self._socket = sock
         self._socket.settimeout(0.2)
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
