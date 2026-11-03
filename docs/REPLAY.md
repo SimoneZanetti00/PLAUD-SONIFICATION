@@ -22,6 +22,7 @@ python src/main.py --replay <DATA>/eth_ucy/zara1/crowds_zara01.txt --replay-flip
 - [Looks and views](#looks-and-views)
 - [Calibration and normalisation](#calibration-and-normalisation)
 - [Acceleration events](#acceleration-events)
+- [Sound profiles](#sound-profiles)
 - [Known limits](#known-limits)
 
 ## What happens in replay mode
@@ -155,6 +156,8 @@ All the [general options](CONTROLS.md#command-line) still apply (`--classic`, `-
 | `--replay-camera-dir DIR` | `$PLAUD_OPENTRAJ_DIR` | the folder with `zara01/` and `seq_hotel/` from OpenTraj |
 | `--replay-normalise` | off | map every descriptor to this file's p5–p95 range |
 | `--replay-no-events` | off | no acceleration events |
+| `--replay-profile synthfish\|scene` | `synthfish` | sound mapping: the simulation's, or one that follows the scene ([Sound profiles](#sound-profiles)) |
+| `--replay-terrain FILE` | `$PLAUD_TERRAIN` | profile `scene`: the PLAUD model's terrain map (e.g. `RafaelV2.json`, not included); without it, plain axes |
 | `--replay-event-z Z` | 3 | event onset threshold (z-score) |
 | `--replay-event-refractory S` | 5 | seconds of data time without a new event after one ends |
 
@@ -259,6 +262,48 @@ people move.
 
 Raise `--replay-event-z` or `--replay-event-refractory` for fewer events. For example, z 4 with 8 s
 gives about 1–3.5 per minute.
+
+## Sound profiles
+
+`--replay-profile` chooses how the crowd drives the sound. Both use only addresses the Max patches
+already receive; nothing changes on the Max side.
+
+**`synthfish`** (default): the simulation's mapping, unchanged. The PLAUD territory follows the
+crowd's centroid in the frame, `/plaud/loudness` follows the count, `/gran/density` the count, and
+acceleration events trigger the kick ([above](#acceleration-events)).
+
+**`scene`**: the sound follows the scene's state, not where the crowd stands in the camera frame.
+
+| Sound | From | Address |
+|---|---|---|
+| PLAUD's style territory | **hurry** (mean speed / the file's p95) → horizontal: hurried = left, where the RafaelV2 terrain is more rhythmic with denser onsets; **crowding** (people / most at once in the file) → vertical: crowded = down (fuller, louder), sparse = up (more percussive, brighter). With `--replay-terrain` the point is the terrain cell whose measured features match that state best, kept close to those axes. Smoothed over 4 s | `/plaud/x`, `/plaud/y` |
+| presence | the number of people: **silence when the scene is empty** (fade-out ~3 s), a soft fade-in on the first arrival (~1.5 s), and a gentle log curve with the count, up to the device's default level (−6 dB) | `/mix/master` (PLAUD dry level) |
+| grain density | the walkers' mean step rate (speed / 0.7 m): about 1.9 grains/s per voice at 1.3 m/s; 0 when everybody stands | `/gran/density` |
+| arrivals | a new person enters: a slice of the grain source, slice 1–4 by where they enter (left to right) | `/pad/sample` |
+| walking together | two people start walking together (the social-graph rule, held 2 s): a 0.5 s predator pulse at their midpoint, so one kick and a gentle PLAUD shake (strength 0.35) | `/fx/predator`, `/fx/predator_strength` |
+
+- Each event type is capped at one per 15 s of data time (about 4 per minute).
+- The acceleration kick is off in this profile.
+- Everything runs in data time: pause holds it, `R` and a loop restart it.
+- The per-person grain voices (`/gran/fish_x`) are unchanged.
+- With the data HUD (`H`) a line shows the territory, hurry, crowding, presence, step rate and
+  events sent / detected.
+
+Measured on whole files (`scene` with the terrain):
+
+| | zara1 | hotel | univ (students001) |
+|---|---|---|---|
+| territory x / y (p5–p95) | 0.23–0.51 / 0.49–0.93 | 0.25–0.74 / 0.44–0.92 | 0.48–0.62 / 0.13–0.54 |
+| presence (not silent) | −13 … −6 dB | −13 … −6 dB | −8.4 … −6 dB |
+| silent | 0.5 % of the time | 21.6 % (16 stretches, longest 39 s) | 0 % |
+| step rate (p5–p95) | 0.8–2.1 Hz | 0–2.5 Hz | 0.9–1.2 Hz |
+| arrivals detected → sent per min | 23 → 3.2 | 32 → 2.9 | 117 → 4.1 |
+| walking together detected → sent per min | 21 → 3.0 | 6 → 2.1 | 132 → 4.1 |
+
+Silence takes a few seconds to reach, so empty stretches shorter than that are only quieter (hotel
+is empty 35 % of the time, silent 22 %). `/mix/master` is the PLAUD **dry** level only: the wet path
+(Portal), the granulator and the kick keep their own levels. The granulator's voices follow the number of people, so it should fall silent when no one is
+left, but whether an empty `/gran/fish_x` list reaches `shoal_gran` has not been checked in Max yet.
 
 ## Known limits
 

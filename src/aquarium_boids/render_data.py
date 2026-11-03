@@ -37,6 +37,7 @@ from pygame.math import Vector2
 from .controls import RuntimeControls
 from .render import View, draw_caption, draw_hud
 from .replay.camera import VIDEO_CREDIT
+from .replay.mapping import TOGETHER_NEAR_M, together_rule
 
 if TYPE_CHECKING:
     from .boids import Boid
@@ -68,10 +69,7 @@ CAMERA_DIM = 115  # reference frame brightness x115/255
 CAMERA_HEADING_STEP = 0.25  # metres ahead used to find the heading direction in the frame
 SCALE_BAR_MAX_PX = 260  # long enough for 5 m (one major grid cell) in every ETH/UCY scene
 # Social graph (N)
-GRAPH_NEAR_M = 2.0  # metres: closer than this -> a thin line
-GRAPH_MOVING_MS = 0.4  # m/s: both must move faster than this to walk together
-GRAPH_HEADING_COS = math.cos(math.radians(30))  # headings within 30 degrees
-GRAPH_SPEED_DIFF_MS = 0.3  # m/s
+GRAPH_NEAR_M = TOGETHER_NEAR_M  # metres: closer than this -> a thin line (walking together: replay/mapping.py)
 GRAPH_TOGETHER_S = (2.0, 6.0)  # seconds of walking together: line starts to thicken .. fully bright
 GRAPH_NEAR_COLOR = (78, 98, 124)
 GRAPH_TOGETHER_COLORS = ((150, 128, 78), (255, 232, 150))
@@ -105,13 +103,9 @@ def id_color(track_id: str) -> tuple[int, int, int]:
 
 
 def walking_together(dist_m: float, va: tuple[float, float], vb: tuple[float, float], to_ms: float) -> bool:
-    """Two people walk together: close, both moving, similar heading and speed.
-    va, vb: velocities in any unit; to_ms converts their length to m/s."""
-    sa, sb = math.hypot(*va) * to_ms, math.hypot(*vb) * to_ms
-    if dist_m >= GRAPH_NEAR_M or sa < GRAPH_MOVING_MS or sb < GRAPH_MOVING_MS:
-        return False
-    cos = (va[0] * vb[0] + va[1] * vb[1]) / (math.hypot(*va) * math.hypot(*vb))
-    return cos > GRAPH_HEADING_COS and abs(sa - sb) < GRAPH_SPEED_DIFF_MS
+    """Two people walk together (the rule of replay/mapping.together_rule, shared with the sound).
+    va, vb: velocities in any unit; to_ms converts them to m/s."""
+    return together_rule(dist_m, (va[0] * to_ms, va[1] * to_ms), (vb[0] * to_ms, vb[1] * to_ms))
 
 
 def nice_length(units_per_px: float, max_px: float = SCALE_BAR_MAX_PX) -> float:

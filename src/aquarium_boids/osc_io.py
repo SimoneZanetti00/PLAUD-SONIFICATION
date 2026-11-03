@@ -59,7 +59,8 @@ class OscSender:
         self.client.send_message("/aquarium/direct", payload)
         self._send_plain("direct", payload)
 
-    def send_granular(self, descriptors: dict[str, float], controls: RuntimeControls) -> list:
+    def send_granular(self, descriptors: dict[str, float], controls: RuntimeControls,
+                      density: float | None = None) -> list:
         """Pre-scaled controls ready for the Max granulator (Pan / Density / Noise).
 
         The Max patch just routes these into the granulator inlets, no scaling needed:
@@ -68,6 +69,7 @@ class OscSender:
           /gran/nchan   int   1..48   (granular channels, from number of fish)
           /gran/noise   float 0..1    (chaos: agitation + predator + disorder)
         Also sent bundled as /gran and as FUDI "gran ... ;" on 7401.
+        density: replay profile "scene" sends its own /gran/density (walking cadence); None = from fish_count.
         """
         center_x = descriptors.get("center_x", 0.5)
         fish = descriptors.get("fish_count", 0.0)
@@ -76,7 +78,7 @@ class OscSender:
         predator = controls.predator_amount / 3.0
 
         pan = center_x * 2.0 - 1.0
-        probability = fish * 100.0
+        probability = fish * 100.0 if density is None else density
         nchan = 1 + round(fish * 47)
         noise = max(0.0, min(1.0, agitation * 1.2 + predator * 0.7 + (1.0 - coherence) * 0.2))
 
@@ -89,7 +91,7 @@ class OscSender:
         self._send_plain("gran", payload)
         return payload
 
-    def send_plaud(self, descriptors: dict[str, float]) -> tuple[float, float]:
+    def send_plaud(self, descriptors: dict[str, float], xy: tuple[float, float] | None = None) -> tuple[float, float]:
         """Flock position as a moving point in PLAUD's latent space (for nn~ decode).
 
         The flock centroid (x, y) navigates the latent space; two more descriptors
@@ -101,9 +103,10 @@ class OscSender:
           /plaud/latent   [x y z w]     ready 4-vector for [mc.pack~ 4] -> ---final_latents
           /plaud/loudness float 0.6..1.4  (fish_count; partial window, artist keeps final say)
           /plaud/temp     float 0..1      (agitation -> synthesis temperature/chaos)
+        xy: replay profile "scene" sends the crowd-state territory instead of the centroid; None = centroid.
         """
-        x = descriptors.get("center_x_raw", 0.5)
-        y = descriptors.get("center_y_raw", 0.5)
+        x = descriptors.get("center_x_raw", 0.5) if xy is None else xy[0]
+        y = descriptors.get("center_y_raw", 0.5) if xy is None else xy[1]
         z = descriptors.get("spread", 0.0)
         w = descriptors.get("mean_speed", 0.0)
         self.client.send_message("/plaud/x", x)

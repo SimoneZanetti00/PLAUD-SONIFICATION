@@ -18,6 +18,7 @@ from .controls import RuntimeControls
 from .replay.calibrate import Normaliser, calibrate_descriptors, calibrate_speed_force
 from .replay.events import EventDetector, EventParams
 from .replay.interp import DataClock, Piece, Trajectories, per_frame
+from .replay.mapping import PULSE_STRENGTH, Person, SceneMapping, Terrain
 from .replay.loader import data_bounds, fit_to_world, load_trajectories, resolve_format, to_world
 
 REPLAY_MARGIN = 60.0  # world px kept free around the data (same as the joystick margin)
@@ -127,6 +128,13 @@ class SimulationSource:
         """The simulation's descriptors are already on their own scale: returned as they are."""
         return descriptors
 
+    def mapping_values(self) -> None:
+        """No replay sound profile: main.py sends the standard mapping."""
+        return None
+
+    def take_pad_samples(self) -> list[int]:
+        return []
+
 
 class ReplaySource:
     """Recorded trajectories instead of the boid rules: one Boid per track piece, never flocked.
@@ -151,6 +159,10 @@ class ReplaySource:
       most accelerating person, so main.py sends /fx/predator 1 and the renderers draw the
       rings there; controls.predator_strength follows the event (restored after it). The repeller
       exerts no force: the data already contains the people's reaction.
+    - Sound profile (profile="scene", --replay-profile scene; replay/mapping.py): territory from the
+      crowd's state, presence on /mix/master, grain density from the walking cadence, arrivals and
+      pairs walking together as events; main.py reads mapping_values() and take_pad_samples().
+      The default "synthfish" keeps the standard mapping (and its OSC output) unchanged.
     """
 
     def __init__(
@@ -166,6 +178,8 @@ class ReplaySource:
         events: bool = True,
         event_params: EventParams = EventParams(),
         world: tuple[float, float] = (WIDTH, HEIGHT),
+        profile: str = "synthfish",
+        terrain: Terrain | None = None,
     ) -> None:
         if max_agents < 1:
             raise ValueError(f"max agents must be >= 1, got {max_agents}")
@@ -190,6 +204,13 @@ class ReplaySource:
         self.repeller: Vector2 | None = None  # set during an event (read by main.py)
         self.event_log: list[tuple[float, tuple[float, float], int, float]] = []  # (s from start, data xy, people, z)
         self._saved_strength: float | None = None  # controls.predator_strength before an event
+        if profile not in ("synthfish", "scene"):
+            raise ValueError(f"unknown sound profile {profile!r}")
+        self.profile = profile
+        self.world = world
+        self.mapping = SceneMapping(max_count=max(1, min(dataset.max_population, max_agents)), terrain=terrain) \
+            if profile == "scene" else None
+        self._map_t: float | None = None
         self.agents: list[Boid] = []
         self._pieces: list[Piece] = []  # parallel to agents
         self.peak_waiting = 0  # most pieces kept off screen at once by max_agents
@@ -203,6 +224,8 @@ class ReplaySource:
             f"max_force {self.calibration.max_force:.5f} px/frame^2 (p95 of {self.calibration.samples} samples), "
             f"normalise {'on' if normalise else 'off'}, events "
             + (f"z > {event_params.on:g}, refractory {event_params.refractory:g} s" if events else "off")
+            + f", sound profile {profile}"
+            + ("" if profile == "synthfish" else (" (RafaelV2 terrain)" if terrain else " (plain axes, no terrain)"))
         )
         self._sync(self.clock.t)
 
@@ -213,6 +236,7 @@ class ReplaySource:
         self._pieces = []
         self._end_reported = False
         self._end_event()
+        self._reset_mapping()
         self._sync(self.clock.t)
 
     def step(
@@ -226,10 +250,12 @@ class ReplaySource:
             t = self.clock.advance(dt)
             if self.clock.wrapped:  # loop: data time jumped back, the rolling window is stale
                 self._end_event()
+                self._reset_mapping()
             self._sync(t)
             for boid in self.agents:  # Boid.update's flash decay; update() itself is never called
                 boid.flash = max(0.0, boid.flash - 0.045 * dt)
             self._detect(t)
+            self._map(t)
         if self.clock.finished and not self._end_reported:
             print("[replay] end of data, holding the last frame (R restarts)")
             self._end_reported = True
@@ -260,12 +286,57 @@ class ReplaySource:
         if self.detector is not None:
             self.detector.reset()
 
+    def _reset_mapping(self) -> None:
+        if self.mapping is not None:
+            self.mapping.reset()
+            self._map_t = None
+            if self.detector is None:
+                self.repeller = None
+
+    def _map(self, t: float) -> None:
+        """Profile scene: feed who is on screen (metres, m/s) to the mapping, in data time."""
+        if self.mapping is None:
+            return
+        dt = 0.0 if self._map_t is None else max(0.0, t - self._map_t)
+        self._map_t = t
+        scale = self.transform.scale  # world px per metre
+        to_ms = 60.0 / self.speed / scale
+        people = [
+            Person(f"{piece.track_id}#{piece.index}", b.position.x / scale, b.position.y / scale,
+                   b.velocity.x * to_ms, b.velocity.y * to_ms, b.position.x / self.world[0], b.position.x, b.position.y)
+            for b, piece in zip(self.agents, self._pieces)
+        ]
+        ref = self.calibration.max_speed
+        hurry = min(1.0, sum(b.velocity.length() for b in self.agents) / len(self.agents) / ref) \
+            if self.agents and ref > 0 else 0.0
+        self.mapping.update(t, dt, people, hurry)
+        if self.detector is None:  # the together pulse uses the predator path (no acceleration events here)
+            pulse = self.mapping.pulse
+            self.repeller = None if pulse is None else Vector2(pulse[0], pulse[1])
+
+    def mapping_values(self) -> dict | None:
+        """Profile scene: the values main.py sends instead of the standard ones; None otherwise.
+        xy is in /plaud/x, /plaud/y terms (the device sends 1 - y to the prior's territory_y)."""
+        m = self.mapping
+        if m is None:
+            return None
+        tx, ty_up = m.territory
+        return {"xy": (tx, 1.0 - ty_up), "density": m.density, "master": m.master}
+
+    def take_pad_samples(self) -> list[int]:
+        """Profile scene: slices to play (/pad/sample 1-4) for arrivals since the last call."""
+        if self.mapping is None or not self.mapping.pad_samples:
+            return []
+        out, self.mapping.pad_samples = self.mapping.pad_samples, []
+        return out
+
     def _apply_strength(self, controls: RuntimeControls) -> None:
         """During an event predator_strength follows it; afterwards the previous value comes back."""
-        if self.detector is not None and self.detector.active:
+        pulse = self.mapping is not None and self.mapping.pulse is not None and self.detector is None
+        if pulse or (self.detector is not None and self.detector.active):
             if self._saved_strength is None:
                 self._saved_strength = controls.predator_strength
-            controls.predator_strength = self.detector.strength()
+            controls.predator_strength = PULSE_STRENGTH * 3.0 if pulse else self.detector.strength()
         elif self._saved_strength is not None:
             controls.predator_strength = self._saved_strength
             self._saved_strength = None
@@ -316,10 +387,21 @@ class ReplaySource:
             f"fish_count {d('fish_count', 0):.2f}{' (normalised)' if self.normaliser is not None else ''}",
             f"source: {self.reference}",
             f"{self.event_status()} | predator_amount {controls.predator_amount:.2f} (UDP) | no force on the data",
+            *self._profile_hud(),
             f"OSC out: {OSC_HOST}:{OSC_PORT} | plain out: {PLAIN_UDP_PORT} | control in: {CONTROL_PORT}",
             f"mean_speed {d('mean_speed', 0):.2f} | energy {d('energy', 0):.2f} | density {d('density', 0):.2f} | "
             f"spread {d('spread', 0):.2f} | coherence {d('direction_coherence', 0):.2f}",
         ]
+
+    def _profile_hud(self) -> list[str]:
+        m = self.mapping
+        if m is None:
+            return []
+        db = 70.0 * (m.master - 1.0)
+        return [f"sound scene | territory {m.territory[0]:.2f}/{m.territory[1]:.2f} (hurry {m.hurry:.2f}, crowding "
+                f"{m.crowding:.2f}) | presence {'silent' if m.master <= 0 else f'{db:.0f} dB'} | grains "
+                f"{m.step_rate:.1f} Hz | arrivals {m.arrivals_sent}/{m.arrivals_seen}, together "
+                f"{m.together_sent}/{m.together_seen}"]
 
     def normalise(self, descriptors: dict[str, float]) -> dict[str, float]:
         """With --replay-normalise: the file's p5..p95 -> 0..1 (before the smoother); else unchanged."""

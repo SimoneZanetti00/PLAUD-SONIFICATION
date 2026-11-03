@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import random
 import sys
 import time
@@ -42,6 +43,7 @@ from aquarium_boids.render import ClassicRenderer, Display, ThermalRenderer
 from aquarium_boids.render_data import CAMERA_DIM, DataRenderer
 from aquarium_boids.replay.camera import ENV_DIR as CAMERA_ENV_DIR, find_camera, find_video
 from aquarium_boids.replay.events import EventParams
+from aquarium_boids.replay.mapping import ENV_TERRAIN, PROFILES, Terrain
 from aquarium_boids.replay.loader import FORMATS as REPLAY_FORMATS
 from aquarium_boids.sources import ReplaySource, SimulationSource
 
@@ -172,6 +174,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         f"default ${CAMERA_ENV_DIR}",
     )
     replay.add_argument(
+        "--replay-profile", choices=PROFILES, default="synthfish",
+        help="sound mapping: synthfish (default: the simulation's mapping) or scene (territory from the "
+        "crowd's state, presence, walking-cadence grains, arrival and walking-together events; no "
+        "acceleration kick)",
+    )
+    replay.add_argument(
+        "--replay-terrain", metavar="FILE",
+        help=f"profile scene: the PLAUD model's terrain map (e.g. RafaelV2.json); default ${ENV_TERRAIN}; "
+        "without it, plain axes",
+    )
+    replay.add_argument(
         "--replay-no-events", action="store_true",
         help="no acceleration events (by default an agitation spike sets the predator: /fx/predator + rings)",
     )
@@ -222,13 +235,30 @@ def load_replay(args: argparse.Namespace) -> ReplaySource:
             flip_y=args.replay_flip_y,
             max_agents=args.replay_max_agents,
             normalise=args.replay_normalise,
-            events=not args.replay_no_events,
+            events=not args.replay_no_events and args.replay_profile == "synthfish",
             event_params=EventParams(on=args.replay_event_z, refractory=args.replay_event_refractory),
+            profile=args.replay_profile,
+            terrain=load_terrain(args) if args.replay_profile == "scene" else None,
         )
     except (OSError, ValueError) as exc:
         sys.exit(f"--replay: {exc}")
     print(f"[replay] {source.summary}")
     return source
+
+
+def load_terrain(args: argparse.Namespace) -> Terrain | None:
+    """Profile scene: the terrain map from --replay-terrain or $PLAUD_TERRAIN; None (plain axes) with a reason."""
+    path = args.replay_terrain or os.environ.get(ENV_TERRAIN)
+    if not path:
+        print(f"[replay] sound profile scene: no terrain map (--replay-terrain or ${ENV_TERRAIN}); plain axes")
+        return None
+    try:
+        terrain = Terrain.load(path)
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"[replay] sound profile scene: cannot read the terrain map {path} ({exc}); plain axes")
+        return None
+    print(f"[replay] sound profile scene: terrain {path}")
+    return terrain
 
 
 def replay_camera(args: argparse.Namespace):
@@ -435,6 +465,8 @@ def main(argv: list[str] | None = None) -> None:
             osc.send_fx_predator(predator_active)
 
         flock = source.step(dt, controls, attractor, repeller)
+        for slice_index in source.take_pad_samples():  # replay profile scene: arrivals
+            osc.send_pad_sample(slice_index)
 
         descriptors = smoother.process(source.normalise(compute_descriptors(flock, WIDTH, HEIGHT)))
 
@@ -442,8 +474,11 @@ def main(argv: list[str] | None = None) -> None:
             osc.send_descriptors(descriptors)
             osc.send_controls(controls)
             osc.send_direct_mapping(descriptors, controls)
-            gran = osc.send_granular(descriptors, controls)
-            plaud_xy = osc.send_plaud(descriptors)
+            mapped = source.mapping_values()  # replay profile scene, else None (standard mapping)
+            gran = osc.send_granular(descriptors, controls, density=None if mapped is None else mapped["density"])
+            plaud_xy = osc.send_plaud(descriptors, xy=None if mapped is None else mapped["xy"])
+            if mapped is not None:
+                osc.send_mix("/mix/master", mapped["master"])
             if predator_active:
                 osc.send_fx_predator_strength(controls)
             osc.send_fish_x(flock, WIDTH, GRAN_MAX_VOICES)

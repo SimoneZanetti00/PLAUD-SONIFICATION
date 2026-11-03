@@ -72,6 +72,11 @@ in a recorded scene instead of fish ([REPLAY.md](REPLAY.md)).
 | `/mix/*`, `/pad/*`, `/mix/transpose` | not sent: MIDI is off in replay mode |
 | `/music/*` | still sent, but the sequence differs from a simulation run (the replay draws no random numbers) |
 
+With `--replay-profile scene` ([REPLAY.md](REPLAY.md#sound-profiles)) the same addresses carry other values:
+`/plaud/x`, `/plaud/y` = the crowd-state territory (not the centroid); `/gran/density` = the walking cadence;
+`/mix/master` is sent (presence: 0 when the scene is empty); `/pad/sample 1–4` on arrivals;
+`/fx/predator` 0.5 s pulses (strength 0.35) when two people start walking together; no acceleration events.
+
 The views (map, camera, video) are display only: a replay sends exactly the same OSC in all three.
 
 ## Legacy streams (still sent, not used by SynthFish)
