@@ -206,7 +206,8 @@ It has three views:
 
 The layers follow the data time (pause holds them; `R` and a loop restart clear the timers). All
 views and layers are display only: a replay sends exactly the same OSC in map, camera and video
-view, with or without the layers.
+view, with or without the layers (except with `--replay-profile scene`, where pan and the events
+follow the picture shown: [Sound profiles](#sound-profiles)).
 Measured frame rates are about 60 fps in a 1200x750 window and fullscreen, for all three views.
 
 **Thermal look** (`--replay-look thermal`). People as heads with a heading tick in the aquarium's
@@ -272,36 +273,43 @@ already receive; nothing changes on the Max side.
 crowd's centroid in the frame, `/plaud/loudness` follows the count, `/gran/density` the count, and
 acceleration events trigger the kick ([above](#acceleration-events)).
 
-**`scene`**: the sound follows the scene's state, not where the crowd stands in the camera frame.
+**`scene`**: PLAUD is a slow background bed that follows the scene's state; what you hear as an
+event is something you can point at in the picture, at the same moment.
 
 | Sound | From | Address |
 |---|---|---|
-| PLAUD's style territory | **hurry** (mean speed / the file's p95) → horizontal: hurried = left, where the RafaelV2 terrain is more rhythmic with denser onsets; **crowding** (people / most at once in the file) → vertical: crowded = down (fuller, louder), sparse = up (more percussive, brighter). With `--replay-terrain` the point is the terrain cell whose measured features match that state best, kept close to those axes. Smoothed over 4 s | `/plaud/x`, `/plaud/y` |
-| presence | the number of people: **silence when the scene is empty** (fade-out ~3 s), a soft fade-in on the first arrival (~1.5 s), and a gentle log curve with the count, up to the device's default level (−6 dB) | `/mix/master` (PLAUD dry level) |
+| PLAUD's style territory | **hurry** (mean speed / the file's p95) → horizontal: hurried = left, where the RafaelV2 terrain is more rhythmic with denser onsets; **crowding** (people / most at once in the file) → vertical: crowded = down (fuller, louder), sparse = up (more percussive, brighter). With `--replay-terrain` the point is the terrain cell whose measured features match that state best, kept close to those axes. It glides over ~25 s and stays within the central 60 % of the map | `/plaud/x`, `/plaud/y` |
+| presence | the number of people: **silence when the scene is empty** (fade-out ~3 s), a soft fade-in on the first arrival (~1.5 s), and a gentle log curve with the count, 4 dB wide, up to −10 dB (below the device's −6 dB default: a bed) | `/mix/master` (PLAUD dry level) |
+| PLAUD L2 offset | agitation (mean acceleration / the file's p95) averaged over ~10 s: `0.2 + 1.3 ×` that | `/plaud/temp` |
+| pan of the grain voices | each person's position across the **picture shown**: the video column in the camera and video views, the map's x in the map view | `/gran/fish_x` |
 | grain density | the walkers' mean step rate (speed / 0.7 m): about 1.9 grains/s per voice at 1.3 m/s; 0 when everybody stands | `/gran/density` |
-| arrivals | a new person enters: a slice of the grain source, slice 1–4 by where they enter (left to right) | `/pad/sample` |
-| walking together | two people start walking together (the social-graph rule, held 2 s): a 0.5 s predator pulse at their midpoint, so one kick and a gentle PLAUD shake (strength 0.35) | `/fx/predator`, `/fx/predator_strength` |
+| arrivals | a new person is first **clearly in the picture**: a slice of the grain source, slice 1–4 by where they are (left to right) | `/pad/sample` |
+| walking together | two people, both clearly in the picture, start walking together (the social-graph rule, held 2 s): one kick, without the PLAUD shake (strength 0, then the kick) | `/fx/predator_strength`, `/pad/kick` |
 
+- Clearly in the picture: at least 40 px inside the video frame (camera and video views), or 1.5 m
+  inside the data's bounding box (map view). Someone who only walks along the edge makes no event.
+- Each sent event flashes on the people at the same moment (a ring growing and fading over 1.2 s,
+  labelled "arrival" or "walking together"; a pair is joined by a line), in every view.
 - Each event type is capped at one per 15 s of data time (about 4 per minute).
 - The acceleration kick is off in this profile.
+- PLAUD's internal L1 LFO is not reachable over OSC; it stays as it is (a Max change, phase B).
 - Everything runs in data time: pause holds it, `R` and a loop restart it.
-- The per-person grain voices (`/gran/fish_x`) are unchanged.
 - With the data HUD (`H`) a line shows the territory, hurry, crowding, presence, step rate and
   events sent / detected.
 
-Measured on whole files (`scene` with the terrain):
+Measured on zara1, whole file, video view (`scene` with the terrain):
 
-| | zara1 | hotel | univ (students001) |
-|---|---|---|---|
-| territory x / y (p5–p95) | 0.23–0.51 / 0.49–0.93 | 0.25–0.74 / 0.44–0.92 | 0.48–0.62 / 0.13–0.54 |
-| presence (not silent) | −13 … −6 dB | −13 … −6 dB | −8.4 … −6 dB |
-| silent | 0.5 % of the time | 21.6 % (16 stretches, longest 39 s) | 0 % |
-| step rate (p5–p95) | 0.8–2.1 Hz | 0–2.5 Hz | 0.9–1.2 Hz |
-| arrivals detected → sent per min | 23 → 3.2 | 32 → 2.9 | 117 → 4.1 |
-| walking together detected → sent per min | 21 → 3.0 | 6 → 2.1 | 132 → 4.1 |
+| | zara1 |
+|---|---|
+| territory x / y (p5–p95) | 0.35–0.45 / 0.53–0.70; at most 0.10 of movement in any 10 s |
+| presence (not silent, p5–p95) | −13.3 … −10.8 dB |
+| L2 offset (p5–p95) | 0.38–0.58 |
+| arrivals detected → sent | 140 → 19 in 6 min |
+| walking together detected → sent | 120 → 18 in 6 min |
+| sent events at least 40 px inside the frame | 37 / 37; a moving person under the flash in the video: 32 / 37 |
+| pan vs the column of the motion under each person | r = +0.998, median 8.7 px apart |
 
-Silence takes a few seconds to reach, so empty stretches shorter than that are only quieter (hotel
-is empty 35 % of the time, silent 22 %). `/mix/master` is the PLAUD **dry** level only: the wet path
+Silence takes a few seconds to reach, so empty stretches shorter than that are only quieter. `/mix/master` is the PLAUD **dry** level only: the wet path
 (Portal), the granulator and the kick keep their own levels. The granulator's voices follow the number of people, so it should fall silent when no one is
 left, but whether an empty `/gran/fish_x` list reaches `shoal_gran` has not been checked in Max yet.
 

@@ -3,19 +3,26 @@
 synthfish (default): the simulation's mapping, unchanged (this module is not used).
 
 scene: the sound follows the crowd's state instead of where it stands in the camera frame.
+PLAUD is a slow background bed; what you can point at in the picture is what you hear as events.
 - Territory (/plaud/x, /plaud/y): hurry (mean speed / the file's p95) -> horizontal, hurried = left
   (more rhythmic, denser onsets in the RafaelV2 terrain); crowding (people / most at once in the
   file) -> vertical, crowded = down (fuller, louder), sparse = up (more percussive, brighter). With
   the RafaelV2 terrain map (--replay-terrain) the point is the cell whose measured features match
-  that state best, kept close to those axes; without it, the axes alone. Smoothed over seconds.
+  that state best, kept close to those axes; without it, the axes alone. It glides over ~25 s and
+  stays within the central 60 % of the map (a bed, not a reaction).
 - Presence (/mix/master, the PLAUD dry level): silence when nobody is there; a soft fade-in on the
-  first arrival; a gentle log curve with the number of people up to the device's default level.
+  first arrival; a gentle log curve with the number of people, 4 dB wide, up to -10 dB.
+- L2 offset (/plaud/temp): agitation averaged over ~10 s.
+- Pan (/gran/fish_x): each person's position across the picture the viewer sees: the video column
+  in the camera / video views, the map's x otherwise.
 - Grain density (/gran/density): from the walkers' mean step rate (speed / 0.7 m), so the grain
   voices pulse at walking cadence (~1.9 Hz at 1.3 m/s); 0 when everybody stands.
-- Events, capped at one per EVENT_MIN_GAP_S per type (~4 per minute): an arrival plays a slice of
-  the grain source (/pad/sample 1-4 by where the person enters, left to right); two people who
-  start walking together give a short, gentle predator pulse at their midpoint (/fx/predator 1 then
-  0: one kick and a PLAUD shake). The acceleration kick is off in this profile.
+- Events, only for people clearly visible (not within the frame's edge band), capped at one per
+  EVENT_MIN_GAP_S per type (~4 per minute): an arrival (counted when the person is first clearly in
+  the picture) plays a slice of the grain source (/pad/sample 1-4 by where they are, left to right);
+  two people who start walking together give one kick, without the PLAUD shake (/fx/predator_strength
+  0, then /pad/kick). Each sent event is kept in `events` so the picture can flash it at the same
+  moment. The acceleration kick is off in this profile.
 Everything advances in data time: a pause holds it, a restart or loop resets it.
 """
 from __future__ import annotations
@@ -33,11 +40,15 @@ TERRAIN_GRID = 32  # the 128x128 terrain map averaged down to this many cells pe
 TERRAIN_AXIS_WEIGHT = 1.0  # how strongly the point stays near the plain axes (vs feature match)
 STEP_LENGTH_M = 0.7  # metres per step: step rate = speed / step length
 STANDING_MS = 0.25  # m/s: slower people stand (no steps)
-MASTER_DEFAULT_DB = -6.0  # the device's Dry default (live.gain~ init -6 dB): a full scene reaches it
-MASTER_RANGE_DB = 9.0  # one person is this much quieter than a full scene (log curve in between)
+MASTER_TOP_DB = -10.0  # a full scene: PLAUD as a bed, below the device's Dry default (-6 dB)
+MASTER_RANGE_DB = 4.0  # one person is this much quieter than a full scene (log curve in between)
+TERRITORY_TAU_S = 25.0  # glide of the PLAUD territory (data seconds)
+TERRITORY_RANGE = 0.6  # the territory stays within this central share of the map
+AGITATION_TAU_S = 10.0  # averaging of the agitation that drives the L2 offset
 MASTER_FADE_IN_S = 1.5  # arrival after silence
 MASTER_FADE_OUT_S = 3.0  # scene empties
 EVENT_MIN_GAP_S = 15.0  # per event type: at most ~4 per minute
+EVENT_KEEP = 32  # recent sent events kept for the picture
 TOGETHER_HOLD_S = 2.0  # seconds of walking together before it counts as a pair
 PAIR_STEP_S = 0.1  # the pair check runs at this data-time interval (10 Hz; the 2 s hold needs no more)
 # "Walking together" (shared with the social graph, render_data.py): close, both moving, same way, same pace
@@ -45,8 +56,6 @@ TOGETHER_NEAR_M = 2.0
 TOGETHER_MOVING_MS = 0.4
 TOGETHER_HEADING_COS = math.cos(math.radians(30))
 TOGETHER_SPEED_DIFF_MS = 0.3
-PULSE_S = 0.5  # length of the together pulse (one kick: shoal_fx repeats only after 800 ms)
-PULSE_STRENGTH = 0.35  # /fx/predator_strength of a together pulse (0..1)
 
 
 def db_to_master(db: float) -> float:
@@ -59,7 +68,7 @@ def master_level(count: int, max_count: int) -> float:
     if count <= 0:
         return 0.0
     f = math.log1p(count) / math.log1p(max(1, max_count))
-    return db_to_master(MASTER_DEFAULT_DB - MASTER_RANGE_DB * (1.0 - min(1.0, f)))
+    return db_to_master(MASTER_TOP_DB - MASTER_RANGE_DB * (1.0 - min(1.0, f)))
 
 
 def cadence_density(step_rate_hz: float) -> float:
@@ -134,9 +143,10 @@ class Person:
     y: float
     vx: float  # m/s
     vy: float
-    x01: float  # horizontal position in the world, 0..1 (for the slice choice)
-    wx: float = 0.0  # world px (for the pulse position)
+    pan: float  # 0..1 across the picture the viewer sees (left -> right)
+    wx: float = 0.0  # world px
     wy: float = 0.0
+    visible: bool = True  # clearly inside the picture (not in the edge band)
 
 
 @dataclass
@@ -151,8 +161,11 @@ class SceneMapping:
     density: float = 0.0
     step_rate: float = 0.0
     count: int = 0
+    agitation: float = 0.0  # mean |a| / p95, averaged over AGITATION_TAU_S
+    temp: float = 0.2  # /plaud/temp (L2 offset)
     pad_samples: list[int] = field(default_factory=list)  # arrivals not yet sent
-    pulse: tuple[float, float, float] | None = None  # (world px x, y of the pair midpoint, seconds left)
+    kicks: int = 0  # pair kicks not yet sent
+    events: list[tuple[str, float, tuple[str, ...]]] = field(default_factory=list)  # sent: (kind, t, keys)
     arrivals_seen: int = 0
     together_seen: int = 0
     arrivals_sent: int = 0
@@ -168,31 +181,39 @@ class SceneMapping:
         self.hurry = self.crowding = 0.0
         self.master = self.density = self.step_rate = 0.0
         self.count = 0
+        self.agitation = 0.0
+        self.temp = 0.2
         self.pad_samples.clear()
-        self.pulse = None
+        self.kicks = 0
+        self.events.clear()
         self._known.clear()
         self._together.clear()
         self._last_event.clear()
         self._started = False
         self._pair_dt = 0.0
 
-    def update(self, t: float, dt: float, people: list[Person], hurry_now: float) -> None:
-        """One step of data time `dt` at time t. people: who is on screen; hurry_now: mean speed / p95."""
+    def update(self, t: float, dt: float, people: list[Person], hurry_now: float, agitation_now: float = 0.0) -> None:
+        """One step of data time `dt` at time t. people: who is on screen; hurry_now: mean speed / p95;
+        agitation_now: mean |a| / p95."""
         self.count = len(people)
         crowding_now = min(1.0, self.count / max(1, self.max_count))
         if not self._started:  # first step: start from the scene as it is, people present are not arrivals
             self._started = True
-            self.hurry, self.crowding = hurry_now, crowding_now
+            self.hurry, self.crowding, self.agitation = hurry_now, crowding_now, agitation_now
             self._known = {p.key for p in people}
             self.master = master_level(self.count, self.max_count)
+            self.territory = self._target()
         a = 1.0 - math.exp(-dt / SMOOTH_S) if dt > 0 else 0.0
         if self.count:
             self.hurry += a * (hurry_now - self.hurry)
             self.crowding += a * (crowding_now - self.crowding)
-            target = self.terrain.point(self.hurry, self.crowding) if self.terrain else \
-                (1.0 - self.hurry, 1.0 - self.crowding)
+            target = self._target()
+            g = 1.0 - math.exp(-dt / TERRITORY_TAU_S) if dt > 0 else 0.0
             tx, ty = self.territory
-            self.territory = (tx + a * (target[0] - tx), ty + a * (target[1] - ty))
+            self.territory = (tx + g * (target[0] - tx), ty + g * (target[1] - ty))
+        if dt > 0:
+            self.agitation += (1.0 - math.exp(-dt / AGITATION_TAU_S)) * (agitation_now - self.agitation)
+        self.temp = max(0.0, min(1.0, 0.2 + 1.3 * self.agitation))
         # presence: exponential approach, faster in than out
         goal = master_level(self.count, self.max_count)
         tau = MASTER_FADE_IN_S if goal > self.master else MASTER_FADE_OUT_S
@@ -205,9 +226,15 @@ class SceneMapping:
         self.step_rate = (sum(walking) / len(walking)) / STEP_LENGTH_M if walking else 0.0
         self.density = cadence_density(self.step_rate)
         self._events(t, dt, people)
-        if self.pulse is not None and dt > 0:
-            x, y, left = self.pulse
-            self.pulse = (x, y, left - dt) if left - dt > 0 else None
+
+    def _target(self) -> tuple[float, float]:
+        """Territory target for the current hurry / crowding, kept within the central TERRITORY_RANGE."""
+        x, y = self.terrain.point(self.hurry, self.crowding) if self.terrain else (1.0 - self.hurry, 1.0 - self.crowding)
+        return (0.5 + TERRITORY_RANGE * (x - 0.5), 0.5 + TERRITORY_RANGE * (y - 0.5))
+
+    def _send(self, kind: str, t: float, keys: tuple[str, ...]) -> None:
+        self.events.append((kind, t, keys))
+        del self.events[:-EVENT_KEEP]
 
     def _allowed(self, kind: str, t: float) -> bool:
         last = self._last_event.get(kind)
@@ -217,13 +244,15 @@ class SceneMapping:
         return True
 
     def _events(self, t: float, dt: float, people: list[Person]) -> None:
-        for p in people:  # arrivals
-            if p.key not in self._known:
-                self._known.add(p.key)
-                self.arrivals_seen += 1
-                if self._allowed("arrival", t):
-                    self.arrivals_sent += 1
-                    self.pad_samples.append(1 + min(3, int(p.x01 * 4)))
+        for p in people:  # arrivals: counted when the newcomer is first clearly in the picture
+            if p.key in self._known or not p.visible:
+                continue
+            self._known.add(p.key)
+            self.arrivals_seen += 1
+            if self._allowed("arrival", t):
+                self.arrivals_sent += 1
+                self.pad_samples.append(1 + min(3, int(p.pan * 4)))
+                self._send("arrival", t, (p.key,))
         if dt <= 0:
             return
         self._pair_dt += dt
@@ -231,17 +260,18 @@ class SceneMapping:
             return
         step, self._pair_dt = self._pair_dt, 0.0
         together: dict[tuple[str, str], float] = {}
-        for a, b in _near_pairs(people):  # pairs starting to walk together
-            if not together_rule(math.hypot(a.x - b.x, a.y - b.y), (a.vx, a.vy), (b.vx, b.vy)):
+        for a, b in _near_pairs(people):  # pairs starting to walk together (both clearly visible)
+            if not (a.visible and b.visible) or not together_rule(math.hypot(a.x - b.x, a.y - b.y), (a.vx, a.vy), (b.vx, b.vy)):
                 continue
             key = (a.key, b.key) if a.key < b.key else (b.key, a.key)
             before = self._together.get(key, 0.0)
             together[key] = before + step
             if before < TOGETHER_HOLD_S <= together[key]:
                 self.together_seen += 1
-                if self.pulse is None and self._allowed("together", t):
+                if self._allowed("together", t):
                     self.together_sent += 1
-                    self.pulse = ((a.wx + b.wx) / 2, (a.wy + b.wy) / 2, PULSE_S)
+                    self.kicks += 1
+                    self._send("together", t, key)
         self._together = together
 
 

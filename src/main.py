@@ -321,6 +321,8 @@ def main(argv: list[str] | None = None) -> None:
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 16)
     camera, video = replay_camera(args) if replay is not None else (None, None)
+    if camera is not None and replay.mapping is not None:  # profile scene: pan follows the video, not the map
+        replay.set_pan_camera(camera, pygame.image.load(str(camera.image_path)).get_size())
     # Replay only: people instead of fish, a caption with the scene and the data time, replay HUD text.
     replay_look = {"people": True, "caption": replay.caption, "hud": replay.hud_lines} if replay is not None else {}
     renderer = (
@@ -467,6 +469,9 @@ def main(argv: list[str] | None = None) -> None:
         flock = source.step(dt, controls, attractor, repeller)
         for slice_index in source.take_pad_samples():  # replay profile scene: arrivals
             osc.send_pad_sample(slice_index)
+        for _ in range(source.take_kicks()):  # replay profile scene: a pair starts walking together
+            osc.send_fx_strength(0.0)  # kick without the PLAUD shake
+            osc.send_pad_kick()
 
         descriptors = smoother.process(source.normalise(compute_descriptors(flock, WIDTH, HEIGHT)))
 
@@ -476,12 +481,13 @@ def main(argv: list[str] | None = None) -> None:
             osc.send_direct_mapping(descriptors, controls)
             mapped = source.mapping_values()  # replay profile scene, else None (standard mapping)
             gran = osc.send_granular(descriptors, controls, density=None if mapped is None else mapped["density"])
-            plaud_xy = osc.send_plaud(descriptors, xy=None if mapped is None else mapped["xy"])
+            plaud_xy = osc.send_plaud(descriptors, xy=None if mapped is None else mapped["xy"],
+                                      temp=None if mapped is None else mapped["temp"])
             if mapped is not None:
                 osc.send_mix("/mix/master", mapped["master"])
             if predator_active:
                 osc.send_fx_predator_strength(controls)
-            osc.send_fish_x(flock, WIDTH, GRAN_MAX_VOICES)
+            osc.send_fish_x(flock, WIDTH, GRAN_MAX_VOICES, values=source.fish_x_values())
             last_descriptor_send = now
 
         # Clean terminal readout: granular controls + PLAUD latent point (~2x/sec).

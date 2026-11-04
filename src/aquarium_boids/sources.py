@@ -18,10 +18,14 @@ from .controls import RuntimeControls
 from .replay.calibrate import Normaliser, calibrate_descriptors, calibrate_speed_force
 from .replay.events import EventDetector, EventParams
 from .replay.interp import DataClock, Piece, Trajectories, per_frame
-from .replay.mapping import PULSE_STRENGTH, Person, SceneMapping, Terrain
+from .replay.mapping import Person, SceneMapping, Terrain
 from .replay.loader import data_bounds, fit_to_world, load_trajectories, resolve_format, to_world
 
 REPLAY_MARGIN = 60.0  # world px kept free around the data (same as the joystick margin)
+# Profile scene: a person is "clearly visible" (events allowed) only away from the picture's edge.
+EDGE_PX = 40.0  # camera / video views: image px from the frame border
+EDGE_M = 1.5  # map view: metres inside the data's bounding box
+EVENT_FLASH_S = 1.2  # how long the picture marks a sent event (data seconds)
 REPLAY_COLORS = [(80, 210, 255), (105, 255, 190), (255, 190, 95), (220, 160, 255)]  # Boid.create's palette
 # ETH/UCY file names (Social GAN / Trajectron++) -> scene names used in the literature.
 ETH_UCY_SCENES = {
@@ -135,6 +139,13 @@ class SimulationSource:
     def take_pad_samples(self) -> list[int]:
         return []
 
+    def take_kicks(self) -> int:
+        return 0
+
+    def fish_x_values(self) -> None:
+        """No replay sound profile: main.py sends the standard per-fish x."""
+        return None
+
 
 class ReplaySource:
     """Recorded trajectories instead of the boid rules: one Boid per track piece, never flocked.
@@ -211,6 +222,13 @@ class ReplaySource:
         self.mapping = SceneMapping(max_count=max(1, min(dataset.max_population, max_agents)), terrain=terrain) \
             if profile == "scene" else None
         self._map_t: float | None = None
+        self._pan_camera = None  # profile scene + camera / video view: pan from the video column
+        self._pan_size = (1, 1)
+        b = data_bounds(dataset)
+        x0, y0 = transform.apply(b.xmin, b.ymin)
+        x1, y1 = transform.apply(b.xmax, b.ymax)
+        edge = EDGE_M * transform.scale
+        self._inner = (min(x0, x1) + edge, min(y0, y1) + edge, max(x0, x1) - edge, max(y0, y1) - edge)
         self.agents: list[Boid] = []
         self._pieces: list[Piece] = []  # parallel to agents
         self.peak_waiting = 0  # most pieces kept off screen at once by max_agents
@@ -290,8 +308,26 @@ class ReplaySource:
         if self.mapping is not None:
             self.mapping.reset()
             self._map_t = None
-            if self.detector is None:
-                self.repeller = None
+
+    def set_pan_camera(self, camera, image_size: tuple[int, int]) -> None:
+        """Profile scene in the camera / video views: pan and visibility follow the picture the viewer
+        sees (the video), not the map. camera: replay.camera.Camera; image_size: its frame in px."""
+        self._pan_camera = camera
+        self._pan_size = image_size
+
+    def _pan_visible(self, b: Boid) -> tuple[float, bool]:
+        """(pan 0..1 left -> right in the displayed picture, clearly visible)."""
+        if self._pan_camera is not None:
+            w, h = self._pan_size
+            px = self._pan_camera.project(*self.transform.to_data(b.position.x, b.position.y))
+            if px is None:
+                return 0.5, False
+            col, row = px
+            visible = EDGE_PX <= col <= w - EDGE_PX and EDGE_PX <= row <= h - EDGE_PX
+            return max(0.0, min(1.0, col / w)), visible
+        x0, y0, x1, y1 = self._inner
+        visible = x0 <= b.position.x <= x1 and y0 <= b.position.y <= y1
+        return max(0.0, min(1.0, b.position.x / self.world[0])), visible
 
     def _map(self, t: float) -> None:
         """Profile scene: feed who is on screen (metres, m/s) to the mapping, in data time."""
@@ -301,18 +337,19 @@ class ReplaySource:
         self._map_t = t
         scale = self.transform.scale  # world px per metre
         to_ms = 60.0 / self.speed / scale
-        people = [
-            Person(f"{piece.track_id}#{piece.index}", b.position.x / scale, b.position.y / scale,
-                   b.velocity.x * to_ms, b.velocity.y * to_ms, b.position.x / self.world[0], b.position.x, b.position.y)
-            for b, piece in zip(self.agents, self._pieces)
-        ]
+        people = []
+        for b, piece in zip(self.agents, self._pieces):
+            pan, visible = self._pan_visible(b)
+            people.append(Person(f"{piece.track_id}#{piece.index}", b.position.x / scale, b.position.y / scale,
+                                 b.velocity.x * to_ms, b.velocity.y * to_ms, pan, b.position.x, b.position.y, visible))
+        self._pans = [p.pan for p in people]
         ref = self.calibration.max_speed
-        hurry = min(1.0, sum(b.velocity.length() for b in self.agents) / len(self.agents) / ref) \
-            if self.agents and ref > 0 else 0.0
-        self.mapping.update(t, dt, people, hurry)
-        if self.detector is None:  # the together pulse uses the predator path (no acceleration events here)
-            pulse = self.mapping.pulse
-            self.repeller = None if pulse is None else Vector2(pulse[0], pulse[1])
+        n = len(self.agents)
+        hurry = min(1.0, sum(b.velocity.length() for b in self.agents) / n / ref) if n and ref > 0 else 0.0
+        p95_accel = self.calibration.max_force * 6.0
+        agitation = min(1.0, sum(b.acceleration.length() for b in self.agents) / n / p95_accel) \
+            if n and p95_accel > 0 else 0.0
+        self.mapping.update(t, dt, people, hurry, agitation)
 
     def mapping_values(self) -> dict | None:
         """Profile scene: the values main.py sends instead of the standard ones; None otherwise.
@@ -321,7 +358,35 @@ class ReplaySource:
         if m is None:
             return None
         tx, ty_up = m.territory
-        return {"xy": (tx, 1.0 - ty_up), "density": m.density, "master": m.master}
+        return {"xy": (tx, 1.0 - ty_up), "density": m.density, "master": m.master, "temp": m.temp}
+
+    def fish_x_values(self) -> list[float] | None:
+        """Profile scene: /gran/fish_x as the pan across the displayed picture (slot order); None otherwise."""
+        if self.mapping is None:
+            return None
+        return list(getattr(self, "_pans", []))
+
+    def take_kicks(self) -> int:
+        """Profile scene: pair kicks to send since the last call (kick only, no PLAUD shake)."""
+        if self.mapping is None or not self.mapping.kicks:
+            return 0
+        n, self.mapping.kicks = self.mapping.kicks, 0
+        return n
+
+    def event_marks(self) -> list[tuple[str, float, list[Boid]]]:
+        """Profile scene: (kind, age in data seconds, agents) of events sent in the last EVENT_FLASH_S,
+        for the picture to mark on the people at the same moment."""
+        if self.mapping is None:
+            return []
+        by_key = {f"{p.track_id}#{p.index}": b for b, p in zip(self.agents, self._pieces)}
+        out = []
+        for kind, t, keys in self.mapping.events:
+            age = self.clock.t - t
+            if 0.0 <= age <= EVENT_FLASH_S:
+                agents = [by_key[k] for k in keys if k in by_key]
+                if agents:
+                    out.append((kind, age, agents))
+        return out
 
     def take_pad_samples(self) -> list[int]:
         """Profile scene: slices to play (/pad/sample 1-4) for arrivals since the last call."""
@@ -332,11 +397,10 @@ class ReplaySource:
 
     def _apply_strength(self, controls: RuntimeControls) -> None:
         """During an event predator_strength follows it; afterwards the previous value comes back."""
-        pulse = self.mapping is not None and self.mapping.pulse is not None and self.detector is None
-        if pulse or (self.detector is not None and self.detector.active):
+        if self.detector is not None and self.detector.active:
             if self._saved_strength is None:
                 self._saved_strength = controls.predator_strength
-            controls.predator_strength = PULSE_STRENGTH * 3.0 if pulse else self.detector.strength()
+            controls.predator_strength = self.detector.strength()
         elif self._saved_strength is not None:
             controls.predator_strength = self._saved_strength
             self._saved_strength = None

@@ -91,7 +91,8 @@ class OscSender:
         self._send_plain("gran", payload)
         return payload
 
-    def send_plaud(self, descriptors: dict[str, float], xy: tuple[float, float] | None = None) -> tuple[float, float]:
+    def send_plaud(self, descriptors: dict[str, float], xy: tuple[float, float] | None = None,
+                   temp: float | None = None) -> tuple[float, float]:
         """Flock position as a moving point in PLAUD's latent space (for nn~ decode).
 
         The flock centroid (x, y) navigates the latent space; two more descriptors
@@ -117,7 +118,8 @@ class OscSender:
 
         # DSP params driven by the flock (partial windows so the artist keeps control).
         loudness = 0.6 + descriptors.get("fish_count", 0.0) * 0.8       # 0.6..1.4 within PLAUD 0..2
-        temp = max(0.0, min(1.0, 0.2 + descriptors.get("energy", 0.0) * 1.3))  # agitation -> chaos
+        if temp is None:  # replay profile "scene" sends its own (agitation averaged over ~10 s)
+            temp = max(0.0, min(1.0, 0.2 + descriptors.get("energy", 0.0) * 1.3))  # agitation -> chaos
         self.client.send_message("/plaud/loudness", loudness)
         self.client.send_message("/plaud/temp", temp)
         return (x, y)
@@ -141,7 +143,7 @@ class OscSender:
         self.client.send_message("/fx/predator_strength", strength)
         return strength
 
-    def send_fish_x(self, flock: list, width: float, max_voices: int) -> int:
+    def send_fish_x(self, flock: list, width: float, max_voices: int, values: list[float] | None = None) -> int:
         """Per-fish horizontal position for a granulator with one grain voice per fish.
 
         Raw x / width of the first max_voices fish, in flock order (voice i = fish i:
@@ -149,9 +151,17 @@ class OscSender:
         number of fish, up to max_voices; Max decides how many voices it actually uses.
           /gran/fish_x  list of floats 0..1
         """
-        xs = [max(0.0, min(1.0, boid.position.x / width)) for boid in flock[:max_voices]]
+        if values is not None:  # replay profile "scene": the pan across the displayed picture
+            xs = [max(0.0, min(1.0, v)) for v in values[:max_voices]]
+        else:
+            xs = [max(0.0, min(1.0, boid.position.x / width)) for boid in flock[:max_voices]]
         self.client.send_message("/gran/fish_x", xs)
         return len(xs)
+
+    def send_fx_strength(self, strength: float) -> None:
+        """/fx/predator_strength set directly: replay profile "scene" sends 0 before a pair kick (/pad/kick),
+        so shoal_fx kicks without shaking PLAUD (the shake is shake x the last strength)."""
+        self.client.send_message("/fx/predator_strength", float(strength))
 
     def send_mix(self, address: str, value: float) -> None:
         """Mix levels for Max from controller knobs, sent when the knob moves.

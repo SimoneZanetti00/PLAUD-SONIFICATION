@@ -38,6 +38,7 @@ from .controls import RuntimeControls
 from .render import View, draw_caption, draw_hud
 from .replay.camera import VIDEO_CREDIT
 from .replay.mapping import TOGETHER_NEAR_M, together_rule
+from .sources import EVENT_FLASH_S
 
 if TYPE_CHECKING:
     from .boids import Boid
@@ -79,6 +80,10 @@ EXPOSURE_FADE_S = 4.0  # seconds of data time per -1 grey level (one pass ~1.5 m
 EXPOSURE_MIN_STEP = 3.0  # canvas px walked before a segment is laid: standing people add no light
 EXPOSURE_MAX_STEP = 40  # canvas px: a longer jump (slot reuse, restart) draws nothing
 VIDEO_LOOKS = ("normal", "dark", "off")
+# Sound events of profile scene, flashed on the people at the moment they sound (EVENT_FLASH_S long)
+FLASH_COLORS = {"arrival": (120, 220, 255), "together": (255, 205, 110)}
+FLASH_TEXT = {"arrival": "arrival", "together": "walking together"}
+FLASH_RADIUS = (9.0, 30.0)  # ring radius at the start .. end of the flash, canvas px at view scale 1
 LAYER_TEXT = (120, 122, 130)
 
 
@@ -198,6 +203,7 @@ class DataRenderer:
             self._update_exposure(canvas, project, dt)
             canvas.blit(self._exposure_surface, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
         self._draw_agents(canvas, project, k, dt)
+        self._draw_flashes(canvas, project, k)
         if attractor is not None:
             centre = project(attractor.x, attractor.y)
             if centre is not None:
@@ -351,6 +357,27 @@ class DataRenderer:
             if self.labels:
                 label = self._label(track_id)
                 canvas.blit(label, (p.x + dot + 3, p.y - label.get_height() - 1))
+
+    def _draw_flashes(self, canvas: pygame.Surface, project: Projector, k: float) -> None:
+        """Profile scene: a ring growing and fading on each person of a sound event just sent (an arrival:
+        on the newcomer; a pair: on both, joined by a line), with a short label."""
+        for kind, age, agents in self.source.event_marks():
+            f = min(1.0, age / EVENT_FLASH_S)
+            fade = 1.0 - f
+            color = tuple(int(c * fade) for c in FLASH_COLORS[kind])
+            points = [q for q in (project(b.position.x, b.position.y) for b in agents) if q is not None]
+            if not points:
+                continue
+            radius = (FLASH_RADIUS[0] + (FLASH_RADIUS[1] - FLASH_RADIUS[0]) * f) * k
+            width = max(1, round(2.5 * k * fade + 0.5))
+            for q in points:
+                pygame.draw.circle(canvas, color, q, radius, width)
+            if len(points) == 2:
+                pygame.draw.line(canvas, color, points[0], points[1], width)
+            text = self._small.render(FLASH_TEXT[kind], True, color)
+            x = max(q[0] for q in points) + radius + 4
+            y = min(q[1] for q in points) - radius
+            canvas.blit(text, (x, y))
 
     def _camera_frame(self, canvas: pygame.Surface) -> tuple[pygame.Rect, float, Projector]:
         """Draw the dimmed reference frame fitted into the canvas; returns its rect, scale and projector."""

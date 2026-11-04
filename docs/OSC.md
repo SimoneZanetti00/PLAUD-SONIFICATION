@@ -74,10 +74,14 @@ in a recorded scene instead of fish ([REPLAY.md](REPLAY.md)).
 
 With `--replay-profile scene` ([REPLAY.md](REPLAY.md#sound-profiles)) the same addresses carry other values:
 `/plaud/x`, `/plaud/y` = the crowd-state territory (not the centroid); `/gran/density` = the walking cadence;
-`/mix/master` is sent (presence: 0 when the scene is empty); `/pad/sample 1–4` on arrivals;
-`/fx/predator` 0.5 s pulses (strength 0.35) when two people start walking together; no acceleration events.
+`/mix/master` is sent (presence: 0 when the scene is empty, at most −10 dB); `/plaud/temp` = agitation averaged
+over ~10 s; `/gran/fish_x` = each person's position across the picture shown (the video column in the camera and
+video views); `/pad/sample 1–4` on arrivals; `/fx/predator_strength 0` then `/pad/kick` when two people start
+walking together (a kick without the PLAUD shake); no acceleration events. Events fire only for people clearly
+inside the picture.
 
-The views (map, camera, video) are display only: a replay sends exactly the same OSC in all three.
+The views (map, camera, video) are display only: a replay sends exactly the same OSC in all three, except with
+`--replay-profile scene`, where `/gran/fish_x` and the events follow the picture shown.
 
 ## Legacy streams (still sent, not used by SynthFish)
 
