@@ -181,7 +181,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     replay.add_argument(
         "--replay-terrain", metavar="FILE",
-        help=f"profile scene: the PLAUD model's terrain map (e.g. RafaelV2.json); default ${ENV_TERRAIN}; "
+        help=f"profile scene: the PLAUD model's terrain map (.json); default ${ENV_TERRAIN}; "
         "without it, plain axes",
     )
     replay.add_argument(

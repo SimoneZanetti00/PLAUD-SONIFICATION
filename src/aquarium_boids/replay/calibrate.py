@@ -1,4 +1,4 @@
-"""Per-dataset calibration for replay (REPLAY_04 3.5-3.6). No changes to descriptors.py.
+"""Per-dataset calibration for replay. No changes to descriptors.py.
 
 - Speed/force: p95 of |v| and |a| over the whole interpolated file, in px per frame at the replay
   speed. With max_speed = p95|v| and max_force = p95|a| / 6, `mean_speed` and `energy` read as

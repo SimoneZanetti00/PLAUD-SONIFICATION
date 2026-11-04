@@ -37,7 +37,7 @@ def write_terrain(features: dict) -> Path:
 
 
 def synthetic_terrain() -> Path:
-    """As RafaelV2's main directions: onsets and rhythm high on the left; percussive / bright / noisy at
+    """Like a real terrain map's main directions: onsets and rhythm high on the left; percussive / bright / noisy at
     the top, loud at the bottom."""
     n = 128
     left = [[1.0 - j / (n - 1) for j in range(n)] for _ in range(n)]

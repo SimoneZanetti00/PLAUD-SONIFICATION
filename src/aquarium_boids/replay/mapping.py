@@ -9,7 +9,7 @@ as events.
   to its p95 (at least one person .. at least two more), so a sparse street and a dense plaza both
   use the whole range.
 - Territory (/plaud/x, /plaud/y), feature targets: the scene sets wanted values of three terrain
-  features and the lookup picks the best-matching cell of the RafaelV2 map (--replay-terrain):
+  features and the lookup picks the best-matching cell of the PLAUD model's terrain map (--replay-terrain):
     count -> onset_density, mean walking speed -> rhythmicity,
     direction disorder -> texture (the percussive / bright / noisy direction, against loudness).
   Direction disorder is axial: people walking both ways along one line count as ordered, people
@@ -166,10 +166,10 @@ def cadence_density(step_rate_hz: float) -> float:
 
 @dataclass
 class Terrain:
-    """The RafaelV2 style map, averaged to TERRAIN_GRID cells: per cell (x, y_up, onset, rhythm, texture),
-    each feature scaled to its own p5..p95 over the map (0..1). texture = the mean z-score of
-    percussiveness, brightness, noisiness and minus loudness: the map's main direction (they are
-    correlated |r| 0.7-0.9 in RafaelV2, so one value stands for all four)."""
+    """A PLAUD terrain map (style pad), averaged to TERRAIN_GRID cells: per cell (x, y_up, onset, rhythm,
+    texture), each feature scaled to its own p5..p95 over the map (0..1). texture = the mean z-score of
+    percussiveness, brightness, noisiness and minus loudness: one value for the direction along which
+    these tend to move together."""
     cells: list[tuple[float, float, float, float, float]]
 
     @classmethod

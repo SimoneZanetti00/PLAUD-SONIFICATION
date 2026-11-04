@@ -16,10 +16,10 @@ zara1 is the reference scene.
 |---|---|---|---|
 | 1.1 | **One grain voice per person** (phase B, item a) | The clearest link between image and sound: you follow a person and hear them cross the space. Today each person already has a grain voice (up to 16), panned by position, but all voices share one rate; missing: speed → grain rate/pitch per voice, fade in on arrival and out on leaving, and a voice that stays with its person when someone else leaves. | Python lists per voice + `shoal_gran` change in the Max copy |
 | 1.2 | **Darken untracked motion** (item d) | In the video view, only people who are in the data keep their colour, so nobody visible is "silent". | Python only (display) |
-| 1.3 | **Prior character: cfg / tmp / smh** (item B) | Order → PLAUD follows the scene closely; disorder → it improvises; calm → smoother sound. Pairs walking together → higher cfg ("focus"). Keep near cfg 1.5 / tmp 0.6, where the terrain map is valid. | 3 OSC routes in the device + receives in `prior~` (Max copy, with backups) |
+| 1.3 | **Prior character: cfg / tmp / smh** (item B) | Order → PLAUD follows the scene closely; disorder → it improvises; calm → smoother sound. Pairs walking together → higher cfg ("focus"). Keep near the prior settings the terrain map was made with. | 3 OSC routes in the device + receives in `prior~` (Max copy, with backups) |
 | 1.4 | **Latent looper on pairs** (item D, optional) | A "duet": while two people walk together, their latent path is recorded and replayed softly. | Max routes to rec/on/length; test without Live transport |
 | 1.5 | **L1 LFO under control** | L1 still moves on an internal 18.5 s LFO, unrelated to the scene. | Small Max change |
-| 1.6 | **Validation (REPLAY_04 commit 5)** | Proves the replay path feeds the descriptors exactly like the simulation; needed for a paper. | Harness recorder + `--replay-exact` |
+| 1.6 | **Validation** | Proves the replay path feeds the descriptors exactly like the simulation; needed for a paper. | A recorder of the descriptor stream + an exact-replay option |
 | 1.7 | **Blind listening test** | Listeners hear audio only and guess crowded/empty, calm/hurried, arrivals. Shows the mapping is legible, `synthfish` vs `scene`. | 10–12 listeners, thresholds fixed in advance |
 | 1.8 | **Demo video** | 1–2 min, zara1 video view + Max audio, for the README and applications. | Screen recording (OBS / Win+G) |
 
@@ -29,7 +29,7 @@ zara1 is the reference scene.
 |---|---|---|
 | 2.1 | OK from Alessandro (the code base comes from SynthFish) and a licence (MIT?) | conversation |
 | 2.2 | Błażej's answer on publishing our modified PLAUD device; until then `docs/MAX_PATCH_CHANGES.md` explains how to add our routes by hand | his reply |
-| 2.3 | Rafael: whether `RafaelV2.ts` can be shared (e.g. as a GitHub Release) | his reply |
+| 2.3 | Rafael: whether the trained PLAUD model can be shared (e.g. as a GitHub Release) | his reply |
 | 2.4 | Switch the repository to public, add `LICENSE`, fill the demo slot | GitHub settings |
 
 ## 3. New data: other collective behaviours
@@ -77,9 +77,8 @@ audience.
   model takes time to load, which would leave a gap).
 - A "saturation" value from the scene (count, disorder, closeness, events per minute), integrated
   over time; the crash fires when it stays above a threshold, with hysteresis.
-- The crash itself: a few seconds of extreme bending / glitch (prior reseed: the model's prior has
-  a reseed input, input 9, but the device does not connect it yet), then the crossfade to the
-  nature model with a slow fade.
+- The crash itself: a few seconds of extreme bending / glitch (possibly a reset of the prior,
+  which the device does not offer yet), then the crossfade to the nature model with a slow fade.
 - Visual counterpart: the video saturates or freezes, then fades to the dark/clean look.
 - Scenes: a traffic dataset (3.3) or a dense pedestrian scene (univ), or own recordings.
 

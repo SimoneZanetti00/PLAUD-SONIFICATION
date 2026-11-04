@@ -1,9 +1,9 @@
-"""Acceleration events in replay mode (REPLAY_04 3.7). Pure, no pygame.
+"""Acceleration events in replay mode. Pure, no pygame.
 
 A rolling z-score of one signal per frame (ReplaySource feeds the agitation: mean |a| over the
 calibrated p95 |a|), over the last `window` seconds of data time:
 - onset when z > on and rising, outside the refractory period (after a warm-up of window / 2);
-  defaults z > 3.0 and 5 s refractory (REPLAY_04 proposed 2.5 / 2 s: 7-10 onsets per minute on
+  defaults z > 3.0 and 5 s refractory (first proposed 2.5 / 2 s: 7-10 onsets per minute on
   zara1, hotel and univ, too busy for the kick);
 - the event lasts at least `hold` s and ends when z stays below `off` for `release` s;
 - after the end, no new onset for `refractory` s.
@@ -87,7 +87,7 @@ class EventDetector:
 
     def strength(self) -> float:
         """Predator strength 0..3 (0 when idle): 3 x (0.3 + 0.7 x clip((z - on) / 2.5)) on the event's
-        peak z so far. REPLAY_04's formula without the 0.3 floor is ~0 at the onset, when z has only
+        peak z so far. The first formula, without the 0.3 floor, is ~0 at the onset, when z has only
         just crossed the threshold, so the first kick would be silent; with it every onset is audible."""
         if not self.active:
             return 0.0

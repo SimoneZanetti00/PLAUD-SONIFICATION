@@ -70,8 +70,5 @@ The Markov generator still runs but is not part of the SynthFish performance. To
 
 ## History
 
-The early planning notes (in Italian) and the first technical guides are no longer on this branch. They are kept in the git history at commit `fcc93f6`:
-- `docs/archive/` (planning, diary, roadmap, PLAUD meeting brief);
-- `Codex/docs/` (the first OSC, MIDI and Max guides).
-
-For example: `git show fcc93f6:docs/archive/PLAUD_meeting_brief.md`.
+The early planning notes (in Italian) and the first technical guides of the SynthFish phase are not
+part of this repository; they stay in the authors' development history.

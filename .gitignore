@@ -36,7 +36,3 @@ max/grains/
 # Max backups/autosaves
 *.bak
 *.maxpat~
-
-# Other local experiments
-# Claude/ was an early prototype; removed from this branch, still available in the git history
-Claude/

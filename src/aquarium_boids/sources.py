@@ -165,7 +165,7 @@ class ReplaySource:
     - Mouse food/predator and the weight keys have no effect on the data. controls.population
       mirrors the number of agents on screen, so the HUD shows it and -/= do nothing.
     - At the end of the data (without loop) the last frame holds, like a pause.
-    - Events (REPLAY_04 3.7, on unless events=False): a z-score detector on the agitation (mean |a|
+    - Events (on unless events=False): a z-score detector on the agitation (mean |a|
       over the calibrated p95) in data time. At an onset `repeller` is set to the position of the
       most accelerating person, so main.py sends /fx/predator 1 and the renderers draw the
       rings there; controls.predator_strength follows the event (restored after it). The repeller
@@ -250,7 +250,7 @@ class ReplaySource:
             f"normalise {'on' if normalise else 'off'}, events "
             + (f"z > {event_params.on:g}, refractory {event_params.refractory:g} s" if events else "off")
             + f", sound profile {profile}"
-            + ("" if profile == "synthfish" else (" (RafaelV2 terrain)" if terrain else " (plain axes, no terrain)"))
+            + ("" if profile == "synthfish" else (" (terrain map)" if terrain else " (plain axes, no terrain)"))
         )
         self._sync(self.clock.t)
 

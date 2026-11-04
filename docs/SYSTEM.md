@@ -14,7 +14,7 @@ This page explains the whole chain, from a trajectory file to what you hear. For
 - [Scene quantities](#scene-quantities)
 - [Sound profile synthfish](#sound-profile-synthfish)
 - [Sound profile scene](#sound-profile-scene)
-- [The feature-target territory and the RafaelV2 terrain](#the-feature-target-territory-and-the-rafaelv2-terrain)
+- [The feature-target territory and the terrain map](#the-feature-target-territory-and-the-terrain-map)
 - [Events and flashes](#events-and-flashes)
 - [The Max side](#the-max-side)
 - [Limits](#limits)
@@ -149,16 +149,16 @@ treated like the fish school.
 
 ## Sound profile scene
 
-`--replay-profile scene`, optionally with `--replay-terrain` (the PLAUD model's terrain map, e.g.
-`RafaelV2.json`, which comes with the model and is not in this repository). Same addresses where
-possible, plus three that need one route in the PLAUD device ([MAX_PATCH_CHANGES.md](MAX_PATCH_CHANGES.md)).
+`--replay-profile scene`, optionally with `--replay-terrain` (the terrain map, a `.json` file that
+comes with the PLAUD model and is not in this repository). Same addresses where possible, plus three
+that need one route in the PLAUD device ([MAX_PATCH_CHANGES.md](MAX_PATCH_CHANGES.md)).
 
 | Quantity | Formula / curve / glide | OSC | Max object / parameter | What you hear |
 |---|---|---|---|---|
-| count, speed, disorder | feature targets → best terrain cell near the current one, re-picked at 10 Hz, glide τ 4 s ([below](#the-feature-target-territory-and-the-rafaelv2-terrain)) | `/plaud/x`, `/plaud/y` | prior~ territory_x / territory_y | busier and faster: denser, more rhythmic styles; disordered crossing: percussive, bright, noisy styles; ordered flow: fuller, louder ones |
+| count, speed, disorder | feature targets → best terrain cell near the current one, re-picked at 10 Hz, glide τ 4 s ([below](#the-feature-target-territory-and-the-terrain-map)) | `/plaud/x`, `/plaud/y` | prior~ territory_x / territory_y | busier and faster: denser, more rhythmic styles; disordered crossing: percussive, bright, noisy styles; ordered flow: fuller, louder ones |
 | count | `0.15 + 0.85 × count`; 0 when empty; glide τ 1.5 s | `/plaud/loudness` | Loudness dial → 1st latent offset | PLAUD's loudness latent rises with the crowd |
-| count, closeness | `clip(0.8 × (1 − count) + 0.3 × closeness)`; glide τ 1.5 s; held when empty | `/plaud/limit` | Limit dial "lim" → decoder `limit_components` (0 = all partials, 1 = one) | more people, more partials; people pressed together thin them again |
-| closeness | `0.5 × closeness` | `/plaud/stretch` | SpectralStretch dial "str" → decoder `spectral_stretch` (+ = toward highs) | a crowded scene stretches the spectrum upward (tension) |
+| count, closeness | `clip(0.8 × (1 − count) + 0.3 × closeness)`; glide τ 1.5 s; held when empty | `/plaud/limit` | Limit dial "lim" (0 = all partials, 1 = one) | more people, more partials; people pressed together thin them again |
+| closeness | `0.5 × closeness` | `/plaud/stretch` | SpectralStretch dial "str" (+ = toward highs) | a crowded scene stretches the spectrum upward (tension) |
 | speed | speed (0.4–1.5 m/s → 0–1) | `/plaud/centroid` | Centroid dial → 2nd latent offset | brighter when people hurry |
 | agitation | `clip(0.2 + 1.3 × agitation)` | `/plaud/temp` | L2 dial → 4th latent offset | timbre moves with agitation, over seconds |
 | absolute number of people | 0 when empty; otherwise a log curve up to −6 dB, 6 dB wide (one person −10.6 dB in a file with at most 20 at once); fade-in 1.5 s, fade-out 3 s | `/mix/master` | Dry `live.gain~` (−70..0 dB) | silence when nobody is there |
@@ -173,33 +173,24 @@ possible, plus three that need one route in the PLAUD device ([MAX_PATCH_CHANGES
 is off in this profile. The HUD (`H`) shows three lines: the scene quantities, the PLAUD values and
 the events.
 
-## The feature-target territory and the RafaelV2 terrain
+## The feature-target territory and the terrain map
 
-PLAUD's prior is steered by a 2D style point, the **territory**. The model comes with a terrain
-map (`RafaelV2.json`): six audio features measured on 8 s of generated audio at a 24×24 grid of
-territory points (cfg 1.5, temperature 0.6, one seed) and interpolated to 128×128, each 0–1:
+PLAUD's prior is steered by a 2D style point, the **territory**. Our PLAUD model, trained on the
+musician's recordings, comes with a **terrain map** (a `.json` file passed with
+`--replay-terrain`): a 128×128 grid over the territory with six audio features of the sound PLAUD
+makes there, each 0–1: rhythmicity, onset_density, percussiveness, loudness, brightness and
+noisiness.
 
-| Feature | p5 / median / p95 | Layout |
-|---|---|---|
-| rhythmicity | 0.19 / 0.41 / 0.66 | small patches, slightly higher on the left |
-| onset_density | 0.09 / 0.40 / 0.74 | patchy, higher on the left |
-| percussiveness | 0.10 / 0.28 / 0.69 | smooth, high at the top |
-| loudness | 0.13 / 0.50 / 0.78 | smooth, high at the bottom |
-| brightness | 0.13 / 0.31 / 0.59 | smooth, high at the top |
-| noisiness | 0.10 / 0.19 / 0.59 | smooth, high at the top |
-
-They are strongly correlated: brightness and noisiness r = +0.91, percussiveness with both
-+0.7, loudness against all three −0.7 to −0.9; rhythmicity and onset_density +0.43, and mostly
-independent of the rest. In practice the map has about two and a half directions (59 % of the
-variance on the percussive / bright / noisy ↔ loud axis, 21 % on rhythm and onsets).
-
-So profile scene uses three targets, each scaled to the map's own p5–p95:
+Percussiveness, brightness and noisiness tend to rise together where loudness falls, so profile
+scene treats them as one direction, **texture**. It uses three targets, each scaled to the map's own
+p5–p95:
 - **onset_density ← count**;
 - **rhythmicity ← speed**;
 - **texture ← disorder** (disorder / 0.6, clipped). Texture is one value per cell for the main
   direction: the mean z-score of percussiveness, brightness and noisiness, minus that of loudness.
 
-Walking together is deliberately not on the map (it is planned for the prior's cfg).
+Walking together is deliberately not on the map (it is planned for the prior's cfg). The code
+reads the six features by name, so any terrain map in the same format works.
 
 **Lookup.** The map is averaged to 32×32 cells. Ten times a second the cell with the lowest
 `Σ (feature − target)² + 0.3 × (distance from the current territory)²` is chosen: the penalty keeps
@@ -224,35 +215,34 @@ sent event was at least 40 px inside the frame, with a moving person under the f
 
 ## The Max side
 
-Three patches run in one Max session: the **PLAUD device** (not in this repository), and
+Three patches run in one Max session: **our modified copy of the PLAUD device** (not in this
+repository), and
 `max/shoal_gran.maxpat` and `max/shoal_fx.maxpat` (in this repository). How the device receives
 OSC is in [MAX_SETUP.md](MAX_SETUP.md); the routes this project added are in
 [MAX_PATCH_CHANGES.md](MAX_PATCH_CHANGES.md).
 
 ### The PLAUD device
 
-What happens inside the device, as read from its patch and from the model's TorchScript code:
+The device's controls, section by section as its interface shows them:
 
 ```
- prior (nn~ ... prior): territory x/y, tmp, cfg, smh -> 4 latents
-   + Loudness, Centroid, L1, L2 dials (offsets on latents 1-4)
-   -> looper (passes the latents through, or plays a recorded latent path)
-   -> posterior: x ch1-4, then + ch1-4
-   -> decoder (nn~ ... decode): DDSP synthesis, with the bending controls
-   -> Dry gain -> output;  Wet gain -> vst~ (Portal) -> output
+ prior: territory X / Y, cfg, tmp, smh      -> 4 latents
+   + Loudness, Centroid, L1, L2 dials        (offsets on latents 1-4)
+   -> looper                                 (live latents, or a recorded latent path)
+   -> posterior: x and + per channel
+   -> synthesis, with the bending controls
+   -> Dry (direct) and Wet (into the Portal effect)
 ```
 
 | Part | Control | Range | What it does | OSC today |
 |---|---|---|---|---|
 | prior | territory X / Y | 0–1 | the style point (the terrain map's coordinates) | `/plaud/x`, `/plaud/y` |
-| prior | cfg | 0–20 | guidance strength toward the territory: `uncond + cfg × (cond − uncond)` on the token logits; also the terrain display's contrast | no (planned) |
-| prior | tmp | 0–5 | sampling temperature of the prior's tokens | no (planned; `/plaud/temp` is L2, not this) |
-| prior | smh | 0–1 | smoothing of the prior's output latents (exponential, capped at 0.999) | no (planned) |
+| prior | cfg | 0–20 | how closely the prior follows the territory | no (planned) |
+| prior | tmp | 0–5 | how freely it varies (temperature) | no (planned; `/plaud/temp` is L2, not this) |
+| prior | smh | 0–1 | how smoothly the latents move | no (planned) |
 | prior | on / off | | mutes the prior | no |
-| prior | conditioning inputs 0–3 | | the final latents fed back, delayed; in this patch they pass through a `*~` with no argument, so they are 0 | — |
-| prior | reseed (input 9) | | a rising edge restarts the prior's sequence; not connected in the patch | — |
 | dials | Loudness, Centroid | 0–1 | offsets on latents 1 and 2, scaled by LdMin/LdMax, CdMin/CdMax (0–1) | `/plaud/loudness`; `/plaud/centroid` (added) |
-| dials | L1, L2 | −1–1 | offsets on latents 3 and 4. L1 is driven by an internal LFO (`cycle~ 0.054`, ~18.5 s period) | `/plaud/temp` → L2; L1 no |
+| dials | L1, L2 | −1–1 | offsets on latents 3 and 4. L1 moves on its own, in a slow ~18.5 s cycle | `/plaud/temp` → L2; L1 no |
 | dials | bypass | on / off | freezes the four dials: neither the UI nor OSC reaches the latents while it is on (off at load) | no |
 | looper | on | on / off | plays the recorded latent path instead of the live latents | no (planned) |
 | looper | rec | on / off | records the latents into the buffer | no (planned) |
@@ -269,8 +259,8 @@ What happens inside the device, as read from its patch and from the model's Torc
 | toggles | rythme | on / off (off) | every 1 s: plays the device's kick sample and ramps Shape to 0.5 over 0.8 s, then back to 0 in 0.1 s | no |
 | toggles | kick | on / off (off) | mutes / unmutes that kick sample | no |
 | toggles | latent | on / off | display only: the latent meters | — |
-| toggles | prior glitch | on / off, 108 ms | retriggers a sample into a meter only: no sound, no effect on the prior | — |
-| output | Dry, Wet | −70–6 dB (−6) | PLAUD's direct level; the level into the Portal effect (`vst~`) | `/mix/master`, `/mix/wet` |
+| toggles | prior glitch | on / off, 108 ms | no audible effect in our copy | — |
+| output | Dry, Wet | −70–6 dB (−6) | PLAUD's direct level; the level into the Portal effect | `/mix/master`, `/mix/wet` |
 
 ### shoal_gran.maxpat
 
@@ -299,13 +289,13 @@ glide back in 400 ms) and feeds a long reverb. Details: [MAX_SETUP.md](MAX_SETUP
     its texture target and stretch stay near the top.
   - Arrivals fire when the newcomer crosses the 40 px edge line, so nearly all play slice 1
     (from the left) or 4 (from the right).
-  - The terrain map was measured at cfg 1.5 and temperature 0.6 with one seed; rhythm and onsets
-    are patchy, so the reached features miss the targets by 0.1–0.23 (median).
+  - The terrain map describes the sound at fixed prior settings, and its rhythm and onsets vary in
+    small patches, so the reached features miss the targets by 0.1–0.23 (median).
   - shoal_gran has 16 voices: people beyond the 16th have no grain voice.
   - In profile synthfish, replays keep Limit at 1 (a single partial), as described above.
 - **Max.**
-  - The prior's cfg, tmp and smh, the posterior, the looper and the L1 LFO have no OSC route yet.
-  - The prior's conditioning inputs are multiplied by 0 in the patch.
+  - The prior's cfg, tmp and smh, the posterior, the looper and L1's own movement have no OSC
+    route yet.
   - Bypass blocks the dials, OSC included.
 - **Platform.** Tested on Windows only. The descriptor rate is ~15 Hz (a 1/20 s gate checked once
   per 60 fps frame).

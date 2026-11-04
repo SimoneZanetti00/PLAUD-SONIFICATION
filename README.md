@@ -117,11 +117,11 @@ the repository (called `<DATA>` below). Follow [docs/REPLAY.md, "Getting the fil
 **4. Run.** Replace `<DATA>` with your folder.
 
 The main scene, zara1 over its original video, with the scene profile (video environment).
-`<MODEL>` is the folder of the PLAUD model, whose terrain map `RafaelV2.json` comes with the model
-(not included); without `--replay-terrain` the profile uses plain axes instead.
+`<TERRAIN>` is the terrain map, a `.json` file that comes with the PLAUD model (not included);
+without `--replay-terrain` the profile uses plain axes instead.
 
 ```
-python src\main.py --replay <DATA>\eth_ucy\zara1\crowds_zara01.txt --replay-profile scene --replay-terrain <MODEL>\RafaelV2.json --replay-view video --replay-camera-dir <DATA>\opentraj
+python src\main.py --replay <DATA>\eth_ucy\zara1\crowds_zara01.txt --replay-profile scene --replay-terrain <TERRAIN> --replay-view video --replay-camera-dir <DATA>\opentraj
 ```
 
 Other views, with the default profile:
@@ -138,7 +138,7 @@ python src\main.py --replay <DATA>\eth_ucy\hotel\biwi_hotel.txt --replay-view vi
 ```
 
 To avoid repeating the folders, set them once with `set PLAUD_OPENTRAJ_DIR=<DATA>\opentraj` and
-`set PLAUD_TERRAIN=<MODEL>\RafaelV2.json`.
+`set PLAUD_TERRAIN=<TERRAIN>`.
 Other scenes: `zara2`, `univ` (map view), `hotel`; the options are described in
 [docs/REPLAY.md](docs/REPLAY.md#command-line).
 

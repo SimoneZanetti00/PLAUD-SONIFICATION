@@ -1,8 +1,8 @@
 # Changes to the PLAUD device
 
-The PLAUD device (`PLAUD_Simo_DEV2-2.amxd.maxpat` and its subpatches) is not in this repository.
-This page lists **every object and connection this project added** to our copy of it, so you can
-make the same changes by hand in yours.
+The PLAUD device is not in this repository. This page lists **every object and connection this
+project added** to our modified copy of the PLAUD device, so you can make the same changes by hand
+in yours.
 
 The SynthFish routes that came before (`[udpreceive 7400]`, the `/plaud/*`, `/fx/*`, `/gran/*` and
 `/mix/*` routes, the `prior~` edits) are in [MAX_SETUP.md](MAX_SETUP.md). Add those first.
@@ -47,8 +47,8 @@ The route's last outlet (no match) stays unconnected. Nothing existing was remov
 6. Save the device (keep a backup copy of the file first).
 
 A number into a `live.dial`'s left inlet sets it and passes the value on, so each address moves
-its dial exactly as if you turned it. The Centroid dial then goes through the device's `freezer`
-like the other macro dials, so while **bypass** is on it does not reach the latents.
+its dial exactly as if you turned it. Like the other macro dials (Loudness, L1, L2), the Centroid
+dial does not reach the sound while **bypass** is on.
 
 ## Check it
 

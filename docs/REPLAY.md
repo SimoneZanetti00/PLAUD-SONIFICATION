@@ -157,7 +157,7 @@ All the [general options](CONTROLS.md#command-line) still apply (`--classic`, `-
 | `--replay-normalise` | off | map every descriptor to this file's p5–p95 range |
 | `--replay-no-events` | off | no acceleration events |
 | `--replay-profile synthfish\|scene` | `synthfish` | sound mapping: the simulation's, or one that follows the scene ([Sound profiles](#sound-profiles)) |
-| `--replay-terrain FILE` | `$PLAUD_TERRAIN` | profile `scene`: the PLAUD model's terrain map (e.g. `RafaelV2.json`, not included); without it, plain axes |
+| `--replay-terrain FILE` | `$PLAUD_TERRAIN` | profile `scene`: the PLAUD model's terrain map (a `.json` that comes with the model, not included); without it, plain axes |
 | `--replay-event-z Z` | 3 | event onset threshold (z-score) |
 | `--replay-event-refractory S` | 5 | seconds of data time without a new event after one ends |
 
@@ -293,7 +293,7 @@ Four scene quantities drive PLAUD:
 
 | Sound | From | Address |
 |---|---|---|
-| PLAUD's style territory | **feature targets** on the RafaelV2 terrain map (`--replay-terrain`): count → onset_density, speed → rhythmicity, disorder → texture (the percussive / bright / noisy direction, against loudness; on this map those four move together, \|r\| 0.7–0.9). The lookup picks the best-matching cell, with a penalty on the distance from where the territory is now so it does not jump between far patches, and glides there over ~4 s. Without a terrain map: x = 1 − (count + speed) / 2, y = disorder | `/plaud/x`, `/plaud/y` |
+| PLAUD's style territory | **feature targets** on the PLAUD model's terrain map (`--replay-terrain`): count → onset_density, speed → rhythmicity, disorder → texture (the percussive / bright / noisy direction, against loudness, taken as one). The lookup picks the best-matching cell, with a penalty on the distance from where the territory is now so it does not jump between far patches, and glides there over ~4 s. Without a terrain map: x = 1 − (count + speed) / 2, y = disorder | `/plaud/x`, `/plaud/y` |
 | PLAUD loudness (latent) | count: 0.15 at the bottom of the file's range, 1 at the top; 0 when the scene is empty (glide ~1.5 s) | `/plaud/loudness` (Loudness dial) |
 | PLAUD partials (`lim`) | `0.8 × (1 − count) + 0.3 × closeness`: **more people, more partials**; people pressed together thin them again (glide ~1.5 s; held when empty) | `/plaud/limit` (Limit dial: 0 = all partials, 1 = one) |
 | PLAUD spectral stretch (`str`) | `0.5 × closeness`: people close together stretch the spectrum toward the highs | `/plaud/stretch` (SpectralStretch dial, −1..1) |
