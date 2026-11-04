@@ -19,8 +19,9 @@ from aquarium_boids.controls import RuntimeControls  # noqa: E402
 from aquarium_boids.osc_io import OscSender  # noqa: E402
 from aquarium_boids.replay.camera import Camera  # noqa: E402
 from aquarium_boids.replay.mapping import (  # noqa: E402
-    EVENT_MIN_GAP_S, MASTER_RANGE_DB, MASTER_TOP_DB, PAIR_STEP_S, TERRITORY_RANGE, Person, SceneMapping, Terrain,
-    cadence_density, db_to_master, master_level, together_rule,
+    EVENT_MIN_GAP_S, FULL_COUNT, LIMIT_ONE, LOUDNESS_ONE, MASTER_RANGE_DB, MASTER_TOP_DB, PAIR_STEP_S,
+    TERRITORY_TAU_S, Person, SceneMapping, Terrain, cadence_density, centroid_level, db_to_master, limit_level,
+    loudness_level, master_level, together_rule,
 )
 from aquarium_boids.sources import EVENT_FLASH_S, ReplaySource  # noqa: E402
 
@@ -45,14 +46,33 @@ def person(key, x, y, vx, vy=0.0, pan=0.5, visible=True):
 
 
 class Curves(unittest.TestCase):
-    def test_master_level_is_a_quiet_steady_bed(self):
+    def test_master_level(self):
         self.assertEqual(master_level(0, 20), 0.0)
         self.assertAlmostEqual(master_level(20, 20), db_to_master(MASTER_TOP_DB))
-        self.assertAlmostEqual(master_level(20, 20), 1 - 10 / 70)
+        self.assertAlmostEqual(master_level(20, 20), 1 - 6 / 70)  # the device's Dry default
         levels = [master_level(n, 20) for n in range(1, 21)]
         self.assertEqual(levels, sorted(levels))  # more people, louder
-        self.assertAlmostEqual(70 * (levels[-1] - levels[0]), MASTER_RANGE_DB * (1 - 0.228), delta=0.1)  # ~3 dB
+        self.assertAlmostEqual(70 * (levels[-1] - levels[0]), MASTER_RANGE_DB * (1 - 0.228), delta=0.1)  # ~4.6 dB
         self.assertEqual(master_level(40, 20), master_level(20, 20))
+
+    def test_loudness_and_limit_follow_the_count(self):
+        self.assertEqual(loudness_level(0), 0.0)
+        self.assertAlmostEqual(loudness_level(1), LOUDNESS_ONE)
+        self.assertAlmostEqual(loudness_level(FULL_COUNT), 1.0)
+        self.assertEqual(loudness_level(60), 1.0)
+        loud = [loudness_level(n) for n in range(1, FULL_COUNT + 1)]
+        self.assertEqual(loud, sorted(loud))
+        self.assertGreater(loudness_level(4), 0.5)  # log curve: the first few people count most
+        self.assertAlmostEqual(limit_level(1), LIMIT_ONE)  # one person: few partials
+        self.assertEqual(limit_level(FULL_COUNT), 0.0)  # a crowd: all partials
+        lim = [limit_level(n) for n in range(1, FULL_COUNT + 1)]
+        self.assertEqual(lim, sorted(lim, reverse=True))
+
+    def test_centroid_from_walking_speed(self):
+        self.assertEqual(centroid_level(0.0), 0.0)
+        self.assertEqual(centroid_level(0.4), 0.0)
+        self.assertAlmostEqual(centroid_level(0.95), 0.5)
+        self.assertEqual(centroid_level(2.5), 1.0)
 
     def test_cadence_density(self):
         self.assertEqual(cadence_density(0.0), 0.0)
@@ -84,23 +104,25 @@ class TerrainLookup(unittest.TestCase):
         self.assertGreater(x, 0.85)
         self.assertGreater(y, 0.85)
 
-    def test_territory_stays_central_and_glides(self):
-        m = SceneMapping(max_count=10, terrain=self.terrain)
+    def test_territory_uses_the_whole_map_and_glides_in_seconds(self):
         hurried = [person(str(i), i, 0, 1.4) for i in range(10)]
+        m = SceneMapping(max_count=10, terrain=self.terrain)
         m.update(0.0, 0.0, hurried, 1.0)
-        lo = 0.5 - TERRITORY_RANGE / 2
-        self.assertGreaterEqual(min(m.territory), lo - 1e-9)  # never beyond the central 60 %
-        start = m.territory
-        m.update(0.0, 0.0, [], 0.0)
+        self.assertLess(max(m.territory), 0.15)  # hurried and crowded: the corner, not the central 60 %
         m2 = SceneMapping(max_count=10, terrain=self.terrain)
         m2.update(0.0, 0.0, hurried[:1], 0.0)  # calm, sparse
+        start = m2.territory
+        goal = self.terrain.point(1.0, 1.0)
         t = 0.0
-        for _ in range(60 * 5):  # 5 s later, now hurried and crowded: the bed has moved only part of the way
+        for _ in range(int(60 * TERRITORY_TAU_S)):  # one time constant later: ~63 % of the way
             t += 1 / 60
             m2.update(t, 1 / 60, hurried, 1.0)
-        moved = abs(m2.territory[0] - 0.5 - TERRITORY_RANGE * (self.terrain.point(m2.hurry, m2.crowding)[0] - 0.5))
-        self.assertGreater(moved, 0.05)
-        self.assertNotEqual(start, (0.5, 0.5))
+        share = (start[0] - m2.territory[0]) / (start[0] - goal[0])
+        self.assertAlmostEqual(share, 0.63, delta=0.05)
+        for _ in range(60 * 16):  # 20 s in all: there
+            t += 1 / 60
+            m2.update(t, 1 / 60, hurried, 1.0)
+        self.assertAlmostEqual(m2.territory[0], goal[0], delta=0.02)
 
     def test_bad_orientation(self):
         d = json.loads(self.path.read_text(encoding="utf-8"))
@@ -136,8 +158,32 @@ class Mapping(unittest.TestCase):
     def test_agitation_is_averaged_for_l2(self):
         m = SceneMapping(max_count=10)
         m.update(0.0, 0.0, [person("a", 0, 0, 1.2)], 0.5, agitation_now=0.0)
-        m.update(1.0, 1.0, [person("a", 0, 0, 1.2)], 0.5, agitation_now=1.0)  # a spike: L2 barely moves
-        self.assertLess(m.temp, 0.4)
+        m.update(0.25, 0.25, [person("a", 0, 0, 1.2)], 0.5, agitation_now=1.0)  # a spike: L2 barely moves
+        self.assertLess(m.temp, 0.3)
+        t = 0.25
+        for _ in range(60 * 12):  # sustained agitation: L2 follows within seconds
+            t += 1 / 60
+            m.update(t, 1 / 60, [person("a", 0, 0, 1.2)], 0.5, agitation_now=1.0)
+        self.assertGreater(m.temp, 0.95)
+
+    def test_plaud_follows_count_and_speed(self):
+        m = SceneMapping(max_count=20)
+        m.update(0.0, 0.0, [person("a", 0, 0, 0.5)], 0.3)
+        self.assertAlmostEqual((m.loudness, m.limit), (LOUDNESS_ONE, LIMIT_ONE))
+        crowd = [person(str(i), i, 0, 1.5) for i in range(15)]
+        t = 0.0
+        for _ in range(60 * 6):  # 15 brisk walkers for 6 s
+            t += 1 / 60
+            m.update(t, 1 / 60, crowd, 0.8)
+        self.assertGreater(m.loudness, 0.95)
+        self.assertLess(m.limit, 0.05)
+        self.assertGreater(m.centroid, 0.9)
+        for _ in range(60 * 6):  # everybody leaves: loudness falls to 0, lim and centroid are held
+            t += 1 / 60
+            m.update(t, 1 / 60, [], 0.0)
+        self.assertLess(m.loudness, 0.05)
+        self.assertLess(m.limit, 0.05)
+        self.assertGreater(m.centroid, 0.9)
 
     def test_arrival_waits_until_visible(self):
         m = SceneMapping(max_count=10)
@@ -223,7 +269,7 @@ class SourceAndOsc(unittest.TestCase):
             samples += src.take_pad_samples()
             marks += [m for m in src.event_marks() if m[0] == "arrival"]
         v = src.mapping_values()
-        self.assertEqual(set(v), {"xy", "density", "master", "temp"})
+        self.assertEqual(set(v), {"xy", "density", "master", "temp", "loudness", "limit", "centroid"})
         self.assertGreater(v["master"], 0.7)
         self.assertEqual(len(samples), 1)  # person 3 arrived (once clearly inside the data's box)
         self.assertTrue(marks)  # and the picture had something to flash
@@ -252,7 +298,8 @@ class SourceAndOsc(unittest.TestCase):
         osc._send_plain = lambda *a: None
         d = {"center_x_raw": 0.1, "center_y_raw": 0.2, "fish_count": 0.06, "energy": 0.5}
         osc.send_plaud(d)
-        osc.send_plaud(d, xy=(0.7, 0.3), temp=0.33)
+        osc.send_plaud(d, xy=(0.7, 0.3), temp=0.33, loudness=0.42)
+        osc.send_plaud_bend(0.25, 0.6)
         osc.send_granular(d, RuntimeControls())
         osc.send_granular(d, RuntimeControls(), density=18.5)
         osc.send_fish_x([], 1200, 32, values=[0.2, 1.4])
@@ -260,6 +307,10 @@ class SourceAndOsc(unittest.TestCase):
         get = lambda a: [v for k, v in sent if k == a]  # noqa: E731
         self.assertEqual(get("/plaud/x"), [0.1, 0.7])
         self.assertEqual(get("/plaud/temp"), [min(1.0, 0.2 + 0.5 * 1.3), 0.33])
+        self.assertEqual(get("/plaud/loudness"), [0.6 + 0.06 * 0.8, 0.42])
+        self.assertEqual((get("/plaud/limit"), get("/plaud/centroid")), ([0.25], [0.6]))
+        names = [k for k, _ in sent]
+        self.assertLess(names.index("/plaud/loudness", 6), names.index("/plaud/limit"))  # limit wins in Max
         self.assertEqual(get("/gran/density"), [6.0, 18.5])
         self.assertEqual(get("/gran/fish_x"), [[0.2, 1.0]])
         self.assertEqual(get("/fx/predator_strength"), [0.0])

@@ -92,7 +92,7 @@ class OscSender:
         return payload
 
     def send_plaud(self, descriptors: dict[str, float], xy: tuple[float, float] | None = None,
-                   temp: float | None = None) -> tuple[float, float]:
+                   temp: float | None = None, loudness: float | None = None) -> tuple[float, float]:
         """Flock position as a moving point in PLAUD's latent space (for nn~ decode).
 
         The flock centroid (x, y) navigates the latent space; two more descriptors
@@ -104,7 +104,7 @@ class OscSender:
           /plaud/latent   [x y z w]     ready 4-vector for [mc.pack~ 4] -> ---final_latents
           /plaud/loudness float 0.6..1.4  (fish_count; partial window, artist keeps final say)
           /plaud/temp     float 0..1      (agitation -> synthesis temperature/chaos)
-        xy: replay profile "scene" sends the crowd-state territory instead of the centroid; None = centroid.
+        xy, temp, loudness: replay profile "scene" sends its own values; None = the standard mapping.
         """
         x = descriptors.get("center_x_raw", 0.5) if xy is None else xy[0]
         y = descriptors.get("center_y_raw", 0.5) if xy is None else xy[1]
@@ -117,7 +117,8 @@ class OscSender:
         self._send_plain("plaud", [x, y, z, w])
 
         # DSP params driven by the flock (partial windows so the artist keeps control).
-        loudness = 0.6 + descriptors.get("fish_count", 0.0) * 0.8       # 0.6..1.4 within PLAUD 0..2
+        if loudness is None:
+            loudness = 0.6 + descriptors.get("fish_count", 0.0) * 0.8       # 0.6..1.4 within PLAUD 0..2
         if temp is None:  # replay profile "scene" sends its own (agitation averaged over ~10 s)
             temp = max(0.0, min(1.0, 0.2 + descriptors.get("energy", 0.0) * 1.3))  # agitation -> chaos
         self.client.send_message("/plaud/loudness", loudness)
@@ -157,6 +158,16 @@ class OscSender:
             xs = [max(0.0, min(1.0, boid.position.x / width)) for boid in flock[:max_voices]]
         self.client.send_message("/gran/fish_x", xs)
         return len(xs)
+
+    def send_plaud_bend(self, limit: float, centroid: float) -> None:
+        """Replay profile "scene" only. Needs [route /plaud/limit /plaud/centroid] in the PLAUD device
+        (after udpreceive 7400; docs/OSC.md); a device without it ignores them:
+          /plaud/limit     float 0..1  -> Limit dial (lim: 0 = all partials .. 1 = one partial)
+          /plaud/centroid  float 0..1  -> Centroid dial (centroid latent offset)
+        Sent after /plaud/loudness, which also sets Limit in the device ([scale 0.7 1.4 1. 0.]):
+        the last value wins."""
+        self.client.send_message("/plaud/limit", float(limit))
+        self.client.send_message("/plaud/centroid", float(centroid))
 
     def send_fx_strength(self, strength: float) -> None:
         """/fx/predator_strength set directly: replay profile "scene" sends 0 before a pair kick (/pad/kick),

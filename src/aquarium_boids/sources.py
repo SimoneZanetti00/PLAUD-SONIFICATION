@@ -358,7 +358,8 @@ class ReplaySource:
         if m is None:
             return None
         tx, ty_up = m.territory
-        return {"xy": (tx, 1.0 - ty_up), "density": m.density, "master": m.master, "temp": m.temp}
+        return {"xy": (tx, 1.0 - ty_up), "density": m.density, "master": m.master, "temp": m.temp,
+                "loudness": m.loudness, "limit": m.limit, "centroid": m.centroid}
 
     def fish_x_values(self) -> list[float] | None:
         """Profile scene: /gran/fish_x as the pan across the displayed picture (slot order); None otherwise."""
@@ -462,10 +463,11 @@ class ReplaySource:
         if m is None:
             return []
         db = 70.0 * (m.master - 1.0)
-        return [f"sound scene | territory {m.territory[0]:.2f}/{m.territory[1]:.2f} (hurry {m.hurry:.2f}, crowding "
-                f"{m.crowding:.2f}) | presence {'silent' if m.master <= 0 else f'{db:.0f} dB'} | grains "
-                f"{m.step_rate:.1f} Hz | arrivals {m.arrivals_sent}/{m.arrivals_seen}, together "
-                f"{m.together_sent}/{m.together_seen}"]
+        return [f"sound scene | PLAUD territory {m.territory[0]:.2f}/{m.territory[1]:.2f} (hurry {m.hurry:.2f}, "
+                f"crowding {m.crowding:.2f}) | loudness {m.loudness:.2f} | lim {m.limit:.2f} | centroid "
+                f"{m.centroid:.2f} | L2 {m.temp:.2f} | presence {'silent' if m.master <= 0 else f'{db:.0f} dB'}",
+                f"sound events | grains {m.step_rate:.1f} Hz | arrivals {m.arrivals_sent}/{m.arrivals_seen}, "
+                f"together {m.together_sent}/{m.together_seen}"]
 
     def normalise(self, descriptors: dict[str, float]) -> dict[str, float]:
         """With --replay-normalise: the file's p5..p95 -> 0..1 (before the smoother); else unchanged."""

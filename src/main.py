@@ -482,8 +482,10 @@ def main(argv: list[str] | None = None) -> None:
             mapped = source.mapping_values()  # replay profile scene, else None (standard mapping)
             gran = osc.send_granular(descriptors, controls, density=None if mapped is None else mapped["density"])
             plaud_xy = osc.send_plaud(descriptors, xy=None if mapped is None else mapped["xy"],
-                                      temp=None if mapped is None else mapped["temp"])
+                                      temp=None if mapped is None else mapped["temp"],
+                                      loudness=None if mapped is None else mapped["loudness"])
             if mapped is not None:
+                osc.send_plaud_bend(mapped["limit"], mapped["centroid"])
                 osc.send_mix("/mix/master", mapped["master"])
             if predator_active:
                 osc.send_fx_predator_strength(controls)

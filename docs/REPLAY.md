@@ -266,21 +266,26 @@ gives about 1–3.5 per minute.
 
 ## Sound profiles
 
-`--replay-profile` chooses how the crowd drives the sound. Both use only addresses the Max patches
-already receive; nothing changes on the Max side.
+`--replay-profile` chooses how the crowd drives the sound. `synthfish` uses only addresses the Max
+patches already receive. `scene` also sends `/plaud/limit` and `/plaud/centroid`, which need one
+object in the PLAUD device: `[route /plaud/limit /plaud/centroid]` after `[udpreceive 7400]`, its
+outlets into the Limit and Centroid dials ([OSC.md](OSC.md)). A device without it ignores them.
 
 **`synthfish`** (default): the simulation's mapping, unchanged. The PLAUD territory follows the
 crowd's centroid in the frame, `/plaud/loudness` follows the count, `/gran/density` the count, and
 acceleration events trigger the kick ([above](#acceleration-events)).
 
-**`scene`**: PLAUD is a slow background bed that follows the scene's state; what you hear as an
-event is something you can point at in the picture, at the same moment.
+**`scene`**: PLAUD follows the scene's state within seconds (how many people, how fast they walk);
+what you hear as an event is something you can point at in the picture, at the same moment.
 
 | Sound | From | Address |
 |---|---|---|
-| PLAUD's style territory | **hurry** (mean speed / the file's p95) → horizontal: hurried = left, where the RafaelV2 terrain is more rhythmic with denser onsets; **crowding** (people / most at once in the file) → vertical: crowded = down (fuller, louder), sparse = up (more percussive, brighter). With `--replay-terrain` the point is the terrain cell whose measured features match that state best, kept close to those axes. It glides over ~25 s and stays within the central 60 % of the map | `/plaud/x`, `/plaud/y` |
-| presence | the number of people: **silence when the scene is empty** (fade-out ~3 s), a soft fade-in on the first arrival (~1.5 s), and a gentle log curve with the count, 4 dB wide, up to −10 dB (below the device's −6 dB default: a bed) | `/mix/master` (PLAUD dry level) |
-| PLAUD L2 offset | agitation (mean acceleration / the file's p95) averaged over ~10 s: `0.2 + 1.3 ×` that | `/plaud/temp` |
+| PLAUD's style territory | **hurry** (mean speed / the file's p95) → horizontal: hurried = left, where the RafaelV2 terrain is more rhythmic with denser onsets; **crowding** (people / most at once in the file) → vertical: crowded = down (fuller, louder), sparse = up (more percussive, brighter). With `--replay-terrain` the point is the terrain cell whose measured features match that state best, kept close to those axes. It glides over ~4 s, across the whole map | `/plaud/x`, `/plaud/y` |
+| PLAUD loudness (latent) | the number of people, log curve: 0.15 for one person, 1 from 15; 0 when the scene is empty (glide ~1.5 s) | `/plaud/loudness` (Loudness dial) |
+| PLAUD partials (`lim`) | the number of people: **more people, more partials**: 0.8 for one person, 0 (all partials) from 15 (glide ~1.5 s; held when empty) | `/plaud/limit` (Limit dial: 0 = all partials, 1 = one) |
+| PLAUD centroid (latent) | the mean walking speed: 0.4 → 1.5 m/s gives 0 → 1 (glide ~2 s) | `/plaud/centroid` (Centroid dial) |
+| presence | the number of people: **silence when the scene is empty** (fade-out ~3 s), a soft fade-in on the first arrival (~1.5 s), and a log curve with the count, 6 dB wide, up to the device's −6 dB default | `/mix/master` (PLAUD dry level) |
+| PLAUD L2 offset | agitation (mean acceleration / the file's p95) averaged over ~4 s: `0.2 + 1.3 ×` that | `/plaud/temp` |
 | pan of the grain voices | each person's position across the **picture shown**: the video column in the camera and video views, the map's x in the map view | `/gran/fish_x` |
 | grain density | the walkers' mean step rate (speed / 0.7 m): about 1.9 grains/s per voice at 1.3 m/s; 0 when everybody stands | `/gran/density` |
 | arrivals | a new person is first **clearly in the picture**: a slice of the grain source, slice 1–4 by where they are (left to right) | `/pad/sample` |
@@ -294,20 +299,29 @@ event is something you can point at in the picture, at the same moment.
 - The acceleration kick is off in this profile.
 - PLAUD's internal L1 LFO is not reachable over OSC; it stays as it is (a Max change, phase B).
 - Everything runs in data time: pause holds it, `R` and a loop restart it.
-- With the data HUD (`H`) a line shows the territory, hurry, crowding, presence, step rate and
-  events sent / detected.
+- `/plaud/loudness` also moves the Limit dial inside the device (`[scale 0.7 1.4 1. 0.]`);
+  `/plaud/limit` is sent right after it, so the scene's value is the one that stays.
+- With the data HUD (`H`) two lines show the PLAUD values (territory, hurry, crowding, loudness,
+  lim, centroid, L2, presence) and the events (step rate, events sent / detected).
 
-Measured on zara1, whole file, video view (`scene` with the terrain):
+Measured on whole files (`scene` with the terrain; p5 / median / p95):
 
-| | zara1 |
-|---|---|
-| territory x / y (p5–p95) | 0.35–0.45 / 0.53–0.70; at most 0.10 of movement in any 10 s |
-| presence (not silent, p5–p95) | −13.3 … −10.8 dB |
-| L2 offset (p5–p95) | 0.38–0.58 |
-| arrivals detected → sent | 140 → 19 in 6 min |
-| walking together detected → sent | 120 → 18 in 6 min |
-| sent events at least 40 px inside the frame | 37 / 37; a moving person under the flash in the video: 32 / 37 |
-| pan vs the column of the motion under each person | r = +0.998, median 8.7 px apart |
+| | zara1 (video view) | hotel (camera view) | univ (map view) |
+|---|---|---|---|
+| people on screen | 1 / 5 / 10 | 0 / 3 / 11 | 27 / 48 / 65 |
+| `/plaud/loudness` | 0.25 / 0.66 / 0.87 | 0.00 / 0.42 / 0.89 | 1 / 1 / 1 |
+| `/plaud/limit` | 0.12 / 0.32 / 0.61 | 0.11 / 0.38 / 0.72 | 0 / 0 / 0 |
+| `/plaud/centroid` | 0.30 / 0.65 / 0.89 | 0.10 / 0.68 / 0.99 | 0.03 / 0.15 / 0.24 |
+| territory x / y up | 0.20–0.50 / 0.49–0.93 | 0.23–0.75 / 0.41–0.92 | 0.47–0.65 / 0.08–0.61 |
+| territory movement in 5 s (median / p95) | 0.10 / 0.26 | 0.07 / 0.29 | 0.05 / 0.14 |
+| presence (not silent) | −10.7 / −8.4 / −7.2 dB | −8.9 dB median | −7.4 / −6.6 / −6.2 dB |
+| L2 offset | 0.33 / 0.47 / 0.66 | 0.20 / 0.45 / 0.71 | 0.45 / 0.50 / 0.57 |
+| events sent per min: arrivals / pairs | 3.2 / 3.0 | 2.9 / 2.1 | 4.1 / 4.1 |
+
+univ always has more than 15 people, so its loudness and partials stay at full; there only the
+territory, centroid and L2 move. On zara1 (video view) every sent event was at least 40 px inside
+the frame (37 / 37), with a moving person under the flash in 32 / 37; the pan matches the column of
+the motion under each person (r = +0.998, median 8.7 px apart).
 
 Silence takes a few seconds to reach, so empty stretches shorter than that are only quieter. `/mix/master` is the PLAUD **dry** level only: the wet path
 (Portal), the granulator and the kick keep their own levels. The granulator's voices follow the number of people, so it should fall silent when no one is

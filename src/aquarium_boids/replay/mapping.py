@@ -1,18 +1,26 @@
-"""Replay sound mapping profiles (--replay-profile). Pure Python, no pygame, no Max changes.
+"""Replay sound mapping profiles (--replay-profile). Pure Python, no pygame.
 
 synthfish (default): the simulation's mapping, unchanged (this module is not used).
 
-scene: the sound follows the crowd's state instead of where it stands in the camera frame.
-PLAUD is a slow background bed; what you can point at in the picture is what you hear as events.
+scene: the sound follows the crowd's state instead of where it stands in the camera frame;
+PLAUD reacts to the scene within seconds, and what you can point at in the picture is what you hear
+as events.
 - Territory (/plaud/x, /plaud/y): hurry (mean speed / the file's p95) -> horizontal, hurried = left
   (more rhythmic, denser onsets in the RafaelV2 terrain); crowding (people / most at once in the
   file) -> vertical, crowded = down (fuller, louder), sparse = up (more percussive, brighter). With
   the RafaelV2 terrain map (--replay-terrain) the point is the cell whose measured features match
-  that state best, kept close to those axes; without it, the axes alone. It glides over ~25 s and
-  stays within the central 60 % of the map (a bed, not a reaction).
+  that state best, kept close to those axes; without it, the axes alone. It glides over ~4 s across
+  the whole map.
+- PLAUD loudness latent (/plaud/loudness, the device's Loudness dial 0..1): a log curve with the
+  number of people, low for one person, full from ~15.
+- PLAUD partial limit (/plaud/limit, the Limit dial "lim": 0 = all partials .. 1 = one): more
+  people, more partials (0.8 for one person, 0 from ~15).
+- PLAUD centroid latent (/plaud/centroid, the Centroid dial 0..1): the mean walking speed,
+  0.4 .. 1.5 m/s -> 0 .. 1.
+  /plaud/limit and /plaud/centroid need [route /plaud/limit /plaud/centroid] in the PLAUD device.
 - Presence (/mix/master, the PLAUD dry level): silence when nobody is there; a soft fade-in on the
-  first arrival; a gentle log curve with the number of people, 4 dB wide, up to -10 dB.
-- L2 offset (/plaud/temp): agitation averaged over ~10 s.
+  first arrival; a log curve with the number of people, 6 dB wide, up to the device's -6 dB.
+- L2 offset (/plaud/temp): agitation averaged over ~4 s.
 - Pan (/gran/fish_x): each person's position across the picture the viewer sees: the video column
   in the camera / video views, the map's x otherwise.
 - Grain density (/gran/density): from the walkers' mean step rate (speed / 0.7 m), so the grain
@@ -40,11 +48,17 @@ TERRAIN_GRID = 32  # the 128x128 terrain map averaged down to this many cells pe
 TERRAIN_AXIS_WEIGHT = 1.0  # how strongly the point stays near the plain axes (vs feature match)
 STEP_LENGTH_M = 0.7  # metres per step: step rate = speed / step length
 STANDING_MS = 0.25  # m/s: slower people stand (no steps)
-MASTER_TOP_DB = -10.0  # a full scene: PLAUD as a bed, below the device's Dry default (-6 dB)
-MASTER_RANGE_DB = 4.0  # one person is this much quieter than a full scene (log curve in between)
-TERRITORY_TAU_S = 25.0  # glide of the PLAUD territory (data seconds)
-TERRITORY_RANGE = 0.6  # the territory stays within this central share of the map
-AGITATION_TAU_S = 10.0  # averaging of the agitation that drives the L2 offset
+MASTER_TOP_DB = -6.0  # a full scene: the device's Dry default
+MASTER_RANGE_DB = 6.0  # one person is this much quieter than a full scene (log curve in between)
+TERRITORY_TAU_S = 4.0  # glide of the PLAUD territory (data seconds)
+TERRITORY_RANGE = 1.0  # share of the map the territory may use (1 = all of it)
+AGITATION_TAU_S = 4.0  # averaging of the agitation that drives the L2 offset
+FULL_COUNT = 15  # people for full PLAUD loudness and all partials (log curve from one person)
+LOUDNESS_ONE = 0.15  # /plaud/loudness for one person
+LIMIT_ONE = 0.8  # /plaud/limit for one person (0 = all partials, 1 = one partial)
+COUNT_TAU_S = 1.5  # glide of loudness and limit when the count changes
+CENTROID_MS = (0.4, 1.5)  # mean walking speed (m/s) -> /plaud/centroid 0 .. 1
+CENTROID_TAU_S = 2.0
 MASTER_FADE_IN_S = 1.5  # arrival after silence
 MASTER_FADE_OUT_S = 3.0  # scene empties
 EVENT_MIN_GAP_S = 15.0  # per event type: at most ~4 per minute
@@ -69,6 +83,31 @@ def master_level(count: int, max_count: int) -> float:
         return 0.0
     f = math.log1p(count) / math.log1p(max(1, max_count))
     return db_to_master(MASTER_TOP_DB - MASTER_RANGE_DB * (1.0 - min(1.0, f)))
+
+
+def count_fraction(count: int) -> float:
+    """0 for one person (or none), 1 from FULL_COUNT people, log curve in between."""
+    if count <= 1:
+        return 0.0
+    return min(1.0, math.log(count) / math.log(FULL_COUNT))
+
+
+def loudness_level(count: int) -> float:
+    """/plaud/loudness target: 0 when empty, LOUDNESS_ONE for one person, 1 from FULL_COUNT."""
+    if count <= 0:
+        return 0.0
+    return LOUDNESS_ONE + (1.0 - LOUDNESS_ONE) * count_fraction(count)
+
+
+def limit_level(count: int) -> float:
+    """/plaud/limit target: LIMIT_ONE for one person, 0 (all partials) from FULL_COUNT."""
+    return LIMIT_ONE * (1.0 - count_fraction(count))
+
+
+def centroid_level(mean_speed_ms: float) -> float:
+    """/plaud/centroid target from the mean speed of the people on screen (m/s)."""
+    lo, hi = CENTROID_MS
+    return max(0.0, min(1.0, (mean_speed_ms - lo) / (hi - lo)))
 
 
 def cadence_density(step_rate_hz: float) -> float:
@@ -163,6 +202,9 @@ class SceneMapping:
     count: int = 0
     agitation: float = 0.0  # mean |a| / p95, averaged over AGITATION_TAU_S
     temp: float = 0.2  # /plaud/temp (L2 offset)
+    loudness: float = 0.0  # /plaud/loudness
+    limit: float = LIMIT_ONE  # /plaud/limit
+    centroid: float = 0.0  # /plaud/centroid
     pad_samples: list[int] = field(default_factory=list)  # arrivals not yet sent
     kicks: int = 0  # pair kicks not yet sent
     events: list[tuple[str, float, tuple[str, ...]]] = field(default_factory=list)  # sent: (kind, t, keys)
@@ -183,6 +225,7 @@ class SceneMapping:
         self.count = 0
         self.agitation = 0.0
         self.temp = 0.2
+        self.loudness, self.limit, self.centroid = 0.0, LIMIT_ONE, 0.0
         self.pad_samples.clear()
         self.kicks = 0
         self.events.clear()
@@ -197,22 +240,31 @@ class SceneMapping:
         agitation_now: mean |a| / p95."""
         self.count = len(people)
         crowding_now = min(1.0, self.count / max(1, self.max_count))
+        speed_now = sum(math.hypot(p.vx, p.vy) for p in people) / len(people) if people else 0.0
         if not self._started:  # first step: start from the scene as it is, people present are not arrivals
             self._started = True
             self.hurry, self.crowding, self.agitation = hurry_now, crowding_now, agitation_now
             self._known = {p.key for p in people}
             self.master = master_level(self.count, self.max_count)
-            self.territory = self._target()
-        a = 1.0 - math.exp(-dt / SMOOTH_S) if dt > 0 else 0.0
+            self.territory = self._target(hurry_now, crowding_now)
+            self.loudness, self.limit = loudness_level(self.count), limit_level(self.count)
+            self.centroid = centroid_level(speed_now)
+
+        def glide(tau: float) -> float:
+            return 1.0 - math.exp(-dt / tau) if dt > 0 else 0.0
+
         if self.count:
+            a = glide(SMOOTH_S)
             self.hurry += a * (hurry_now - self.hurry)
             self.crowding += a * (crowding_now - self.crowding)
-            target = self._target()
-            g = 1.0 - math.exp(-dt / TERRITORY_TAU_S) if dt > 0 else 0.0
+            target = self._target(hurry_now, crowding_now)
+            g = glide(TERRITORY_TAU_S)
             tx, ty = self.territory
             self.territory = (tx + g * (target[0] - tx), ty + g * (target[1] - ty))
-        if dt > 0:
-            self.agitation += (1.0 - math.exp(-dt / AGITATION_TAU_S)) * (agitation_now - self.agitation)
+            self.limit += glide(COUNT_TAU_S) * (limit_level(self.count) - self.limit)  # empty scene: held
+            self.centroid += glide(CENTROID_TAU_S) * (centroid_level(speed_now) - self.centroid)
+        self.loudness += glide(COUNT_TAU_S) * (loudness_level(self.count) - self.loudness)
+        self.agitation += glide(AGITATION_TAU_S) * (agitation_now - self.agitation)
         self.temp = max(0.0, min(1.0, 0.2 + 1.3 * self.agitation))
         # presence: exponential approach, faster in than out
         goal = master_level(self.count, self.max_count)
@@ -227,9 +279,9 @@ class SceneMapping:
         self.density = cadence_density(self.step_rate)
         self._events(t, dt, people)
 
-    def _target(self) -> tuple[float, float]:
-        """Territory target for the current hurry / crowding, kept within the central TERRITORY_RANGE."""
-        x, y = self.terrain.point(self.hurry, self.crowding) if self.terrain else (1.0 - self.hurry, 1.0 - self.crowding)
+    def _target(self, hurry: float, crowding: float) -> tuple[float, float]:
+        """Territory target for this hurry / crowding, within the central TERRITORY_RANGE of the map."""
+        x, y = self.terrain.point(hurry, crowding) if self.terrain else (1.0 - hurry, 1.0 - crowding)
         return (0.5 + TERRITORY_RANGE * (x - 0.5), 0.5 + TERRITORY_RANGE * (y - 0.5))
 
     def _send(self, kind: str, t: float, keys: tuple[str, ...]) -> None:

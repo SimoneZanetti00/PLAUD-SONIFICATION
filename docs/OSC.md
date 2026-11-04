@@ -74,11 +74,17 @@ in a recorded scene instead of fish ([REPLAY.md](REPLAY.md)).
 
 With `--replay-profile scene` ([REPLAY.md](REPLAY.md#sound-profiles)) the same addresses carry other values:
 `/plaud/x`, `/plaud/y` = the crowd-state territory (not the centroid); `/gran/density` = the walking cadence;
-`/mix/master` is sent (presence: 0 when the scene is empty, at most −10 dB); `/plaud/temp` = agitation averaged
-over ~10 s; `/gran/fish_x` = each person's position across the picture shown (the video column in the camera and
+`/plaud/loudness` = a log curve with the number of people (0.15 for one, 1 from 15; 0 when empty);
+`/plaud/limit` (0 = all partials .. 1 = one) falls from 0.8 for one person to 0 from 15; `/plaud/centroid` = the mean
+walking speed (0.4 → 1.5 m/s gives 0 → 1); `/mix/master` is sent (presence: 0 when the scene is empty, at most −6 dB);
+`/plaud/temp` = agitation averaged over ~4 s; `/gran/fish_x` = each person's position across the picture shown (the video column in the camera and
 video views); `/pad/sample 1–4` on arrivals; `/fx/predator_strength 0` then `/pad/kick` when two people start
 walking together (a kick without the PLAUD shake); no acceleration events. Events fire only for people clearly
 inside the picture.
+
+`/plaud/limit` and `/plaud/centroid` are new addresses: the PLAUD device needs `[route /plaud/limit /plaud/centroid]`
+connected from `[udpreceive 7400]`, outlet 0 into the Limit dial and outlet 1 into the Centroid dial (the same way
+`/plaud/loudness` reaches the Loudness dial). Without it they are ignored.
 
 The views (map, camera, video) are display only: a replay sends exactly the same OSC in all three, except with
 `--replay-profile scene`, where `/gran/fish_x` and the events follow the picture shown.
