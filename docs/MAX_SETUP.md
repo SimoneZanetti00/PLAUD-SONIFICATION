@@ -22,6 +22,9 @@ Add one `[udpreceive 7400]` to the device and four `route` objects. Each output 
 
 All addresses and ranges are listed in [OSC.md](OSC.md).
 
+The replay **scene** profile also sends `/plaud/limit`, `/plaud/centroid` and `/plaud/stretch`. They need one more
+`route` into the Limit, Centroid and SpectralStretch dials: see [MAX_PATCH_CHANGES.md](MAX_PATCH_CHANGES.md).
+
 ## 2. Let the flock steer PLAUD's prior
 
 In `prior~`, the device's prior subpatch, make three changes:

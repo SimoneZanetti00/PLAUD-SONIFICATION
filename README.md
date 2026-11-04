@@ -1,10 +1,10 @@
 # PLAUD-SONIFICATION
 
 Real collective movement, turned into sound. Recorded trajectories of crowds (pedestrians today,
-animal groups next) are measured frame by frame (where the group is, how spread out, how fast,
-how agitated, when something suddenly happens) and these measures play **PLAUD**, a neural
-(DDSP) synthesis model, together with a per-person granulator in Max/MSP. Nobody plays notes:
-the crowd does.
+animal groups next) are measured frame by frame (how many people, how fast and how orderly they
+walk, how close they are, who arrives, who starts walking together) and these measures play
+**PLAUD**, a neural (DDSP) synthesis model, together with a per-person granulator and a kick in
+Max/MSP. Nobody plays notes: the crowd does.
 
 **Demo video:** _coming soon_ <!-- add the link or a GIF here -->
 
@@ -19,20 +19,55 @@ Each dot is a recorded pedestrian, coloured by speed, with the last 10 s of its 
  trajectory file: ETH/UCY pedestrians, or any CSV of positions (id, frame, x, y)
    |  metres -> screen, smooth motion at 60 fps (spline), per-dataset calibration
    v
- crowd descriptors, 0-1, ~15 Hz                      + acceleration events
-   |  position, spread, speed, agitation, density,     (sudden agitation in the data)
-   |  direction coherence, count, per-person x
+ the people on screen, measured ~15 Hz
+   |  descriptors (count, speed, agitation, centroid, spread, ...)
+   |  scene quantities (count, speed, direction disorder, closeness, arrivals, pairs)
+   v
+ sound profile: synthfish (the fish school's mapping) or scene (the crowd's state)
    v
  OSC over UDP -> 127.0.0.1:7400
    v
  Max/MSP
-   |- PLAUD (nn~)       crowd position steers PLAUD's prior; count -> loudness; agitation -> latent L2
-   |- max/shoal_fx      acceleration events -> a kick (with reverb) + a spectral shake of PLAUD
-   '- max/shoal_gran    each person is a grain voice, panned by its x position
+   |- PLAUD (nn~)       style territory, loudness, centroid, partials (lim), stretch, latent L2
+   |- max/shoal_fx      a kick (with reverb), optionally shaking PLAUD
+   '- max/shoal_gran    each person is a grain voice, panned where they are; slices on arrivals
 ```
 
 The picture shows the people on a metric map, on the scene's reference frame, or over the
-original video. The sound does not depend on the picture.
+original video. The full explanation, with every mapping, is in [docs/SYSTEM.md](docs/SYSTEM.md).
+
+## Sound profiles
+
+`--replay-profile` chooses how the crowd plays the sound.
+
+- **`synthfish`** (default): the simulation's mapping, unchanged. The crowd's centroid steers
+  PLAUD's style, the count sets its loudness and the grain density, agitation moves latent L2, and
+  sudden accelerations in the data trigger the kick.
+- **`scene`**: PLAUD follows the state of the scene within seconds, and every event you hear is
+  something you can point at in the picture.
+
+| In the scene | What you hear | OSC |
+|---|---|---|
+| how many people (relative to the file's own range), how fast they walk, how disordered their directions are | PLAUD's style: the territory cell of the model's terrain map whose onsets, rhythm and texture match best, gliding over ~4 s | `/plaud/x`, `/plaud/y` |
+| how many people | PLAUD's loudness latent; more people, more partials | `/plaud/loudness`, `/plaud/limit` |
+| how fast they walk | PLAUD's centroid latent | `/plaud/centroid` |
+| how close they are to each other | tension: the spectrum stretches upward, the partials thin | `/plaud/stretch`, `/plaud/limit` |
+| agitation | latent L2 | `/plaud/temp` |
+| where each person is in the picture | the pan of their grain voice | `/gran/fish_x` |
+| walking cadence | the grains pulse at the step rate | `/gran/density` |
+| someone enters the picture | a slice of the grain source, by where they enter | `/pad/sample` |
+| two people start walking together | one kick | `/pad/kick` |
+| nobody on screen | silence | `/mix/master` |
+
+In the scene profile every event flashes on its people at the same moment, and people at the very
+edge of the picture make no sound. `/plaud/limit`, `/plaud/centroid` and `/plaud/stretch` need one
+route in the PLAUD device: [docs/MAX_PATCH_CHANGES.md](docs/MAX_PATCH_CHANGES.md).
+
+**zara1 is the main scene.** It is a two-way shopping street (UCY) with 1 to 10 people at once over
+6 minutes, so arrivals and pairs are easy to follow. Its original video and a checked camera
+alignment give the camera and video views, where the sound's pan matches the people. Most of the
+movement you see in the video is annotated (about 77 %, against 28 % in hotel), and the walking
+speeds are realistic (eth moves about twice too fast).
 
 ## Origin
 
@@ -81,6 +116,16 @@ the repository (called `<DATA>` below). Follow [docs/REPLAY.md, "Getting the fil
 
 **4. Run.** Replace `<DATA>` with your folder.
 
+The main scene, zara1 over its original video, with the scene profile (video environment).
+`<MODEL>` is the folder of the PLAUD model, whose terrain map `RafaelV2.json` comes with the model
+(not included); without `--replay-terrain` the profile uses plain axes instead.
+
+```
+python src\main.py --replay <DATA>\eth_ucy\zara1\crowds_zara01.txt --replay-profile scene --replay-terrain <MODEL>\RafaelV2.json --replay-view video --replay-camera-dir <DATA>\opentraj
+```
+
+Other views, with the default profile:
+
 ```
 :: map view (base or video environment)
 python src\main.py --replay <DATA>\eth_ucy\zara1\crowds_zara01.txt --replay-flip-y
@@ -92,7 +137,8 @@ python src\main.py --replay <DATA>\eth_ucy\zara1\crowds_zara01.txt --replay-view
 python src\main.py --replay <DATA>\eth_ucy\hotel\biwi_hotel.txt --replay-view video --replay-camera-dir <DATA>\opentraj
 ```
 
-To avoid repeating the last option, set the folder once with `set PLAUD_OPENTRAJ_DIR=<DATA>\opentraj`.
+To avoid repeating the folders, set them once with `set PLAUD_OPENTRAJ_DIR=<DATA>\opentraj` and
+`set PLAUD_TERRAIN=<MODEL>\RafaelV2.json`.
 Other scenes: `zara2`, `univ` (map view), `hotel`; the options are described in
 [docs/REPLAY.md](docs/REPLAY.md#command-line).
 
@@ -111,8 +157,10 @@ The sound is made in Max 9:
 **Not included:** the PLAUD device, the PLAUD model and all audio. Put your own `shoal_kick.wav`
 and `shoal_gran.aiff` next to the patches.
 
-The routes and the edits to the PLAUD device are in [docs/MAX_SETUP.md](docs/MAX_SETUP.md). Every
-OSC address, including what changes in replay mode, is in [docs/OSC.md](docs/OSC.md).
+The routes and the edits to the PLAUD device are in [docs/MAX_SETUP.md](docs/MAX_SETUP.md), and
+the route this project added for the scene profile is in
+[docs/MAX_PATCH_CHANGES.md](docs/MAX_PATCH_CHANGES.md). Every OSC address, including what changes
+in replay mode, is in [docs/OSC.md](docs/OSC.md).
 
 ## Controls (replay mode)
 
@@ -120,8 +168,9 @@ OSC address, including what changes in replay mode, is in [docs/OSC.md](docs/OSC
 |---|---|
 | `SPACE` | pause / resume the data (and the video) |
 | `R` | restart the file |
-| `H` | HUD on / off: scene, source, data time, people on screen, events, descriptors |
+| `H` | HUD on / off: scene, source, data time, people on screen, events, descriptors, sound profile values |
 | `I` | track id labels on / off |
+| `N` / `L` / `V` | social graph / long exposure / video look (normal, dark, off) |
 | mouse left / right | draw food / predator rings; the predator still triggers the kick in Max. Nobody moves |
 | `F11` | fullscreen on / off |
 | `ESC` | quit |
@@ -142,7 +191,7 @@ src/
 max/
   shoal_fx.maxpat       predator / event kick + spectral shake + reverb
   shoal_gran.maxpat     per-person granulator, slice player, source menu
-docs/                   REPLAY, ARCHITECTURE, OSC, CONTROLS, MAX_SETUP, IDEAS; img/
+docs/                   SYSTEM, REPLAY, ARCHITECTURE, OSC, CONTROLS, MAX_SETUP, MAX_PATCH_CHANGES, ROADMAP, IDEAS; img/
 tests/                  offline tests: python -m unittest discover -s tests
 ```
 
@@ -150,11 +199,14 @@ tests/                  offline tests: python -m unittest discover -s tests
 
 | Page | Contents |
 |---|---|
+| [docs/SYSTEM.md](docs/SYSTEM.md) | how the whole system works: pipeline, scene quantities, both sound profiles as mapping tables, the terrain map, events, the Max patches, limits |
 | [docs/REPLAY.md](docs/REPLAY.md) | data sources and citations, getting the files, every replay option, views, calibration, events, known limits |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | modules, the frame loop, simulation vs replay source, descriptors, how they reach the sound |
 | [docs/OSC.md](docs/OSC.md) | every OSC address with its range, replay-mode differences, the control input on UDP 7500 |
 | [docs/CONTROLS.md](docs/CONTROLS.md) | keyboard, mouse, command line, replay mode, MPK mini 3, MIDIMIX |
 | [docs/MAX_SETUP.md](docs/MAX_SETUP.md) | the PLAUD device routes, the prior~ edits, the `shoal_fx` and `shoal_gran` patches |
+| [docs/MAX_PATCH_CHANGES.md](docs/MAX_PATCH_CHANGES.md) | every object and route this project added to the PLAUD device, and how to add them by hand |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | where the project goes next: finishing the pedestrian piece, public release, new datasets, new PLAUD models, artistic and visual work |
 | [docs/IDEAS.md](docs/IDEAS.md) | ideas and future work from the SynthFish phase |
 
 ## Data sources and citations
@@ -177,6 +229,7 @@ The screenshot above contains a frame of the UCY zara01 video, shown with its cr
 - pedestrian replay from ETH/UCY and from any CSV, on Windows, at 60 fps with up to 100 people;
 - per-dataset calibration, so `mean_speed` and agitation mean the same 0–1 in every scene;
 - acceleration events that trigger the kick;
+- the scene sound profile, with events that flash on the people who make them;
 - map, camera and video views;
 - the original fish simulation, unchanged.
 
@@ -187,9 +240,13 @@ The screenshot above contains a frame of the UCY zara01 video, shown with its cr
 - tested on Windows only.
 
 **Next:**
+- PLAUD's prior (cfg, temperature, smoothing) and latent looper driven by the scene, e.g. people
+  walking together; this needs more routes in the PLAUD device;
 - animal datasets (fish schools, bird flocks, insects), with their own calibration;
 - our own recordings, tracked from video;
 - Max presets per dataset.
+
+The full plan, in order, is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Credits
 

@@ -87,7 +87,7 @@ inside the picture.
 `/plaud/limit`, `/plaud/centroid` and `/plaud/stretch` are new addresses: the PLAUD device needs
 `[route /plaud/limit /plaud/centroid /plaud/stretch]` connected from `[udpreceive 7400]`, outlet 0 into the Limit dial,
 outlet 1 into the Centroid dial and outlet 2 into the SpectralStretch dial (the same way `/plaud/loudness` reaches the
-Loudness dial). Without it they are ignored.
+Loudness dial). Without it they are ignored. How to add it by hand: [MAX_PATCH_CHANGES.md](MAX_PATCH_CHANGES.md).
 
 The views (map, camera, video) are display only: a replay sends exactly the same OSC in all three, except with
 `--replay-profile scene`, where `/gran/fish_x` and the events follow the picture shown.
