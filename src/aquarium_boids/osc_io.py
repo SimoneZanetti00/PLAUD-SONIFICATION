@@ -159,15 +159,17 @@ class OscSender:
         self.client.send_message("/gran/fish_x", xs)
         return len(xs)
 
-    def send_plaud_bend(self, limit: float, centroid: float) -> None:
-        """Replay profile "scene" only. Needs [route /plaud/limit /plaud/centroid] in the PLAUD device
-        (after udpreceive 7400; docs/OSC.md); a device without it ignores them:
-          /plaud/limit     float 0..1  -> Limit dial (lim: 0 = all partials .. 1 = one partial)
-          /plaud/centroid  float 0..1  -> Centroid dial (centroid latent offset)
+    def send_plaud_bend(self, limit: float, centroid: float, stretch: float = 0.0) -> None:
+        """Replay profile "scene" only. Needs [route /plaud/limit /plaud/centroid /plaud/stretch] in the
+        PLAUD device (after udpreceive 7400; docs/OSC.md); a device without it ignores them:
+          /plaud/limit     float 0..1   -> Limit dial (lim: 0 = all partials .. 1 = one partial)
+          /plaud/centroid  float 0..1   -> Centroid dial (centroid latent offset)
+          /plaud/stretch   float -1..1  -> SpectralStretch dial (str: + = toward highs)
         Sent after /plaud/loudness, which also sets Limit in the device ([scale 0.7 1.4 1. 0.]):
         the last value wins."""
         self.client.send_message("/plaud/limit", float(limit))
         self.client.send_message("/plaud/centroid", float(centroid))
+        self.client.send_message("/plaud/stretch", float(stretch))
 
     def send_fx_strength(self, strength: float) -> None:
         """/fx/predator_strength set directly: replay profile "scene" sends 0 before a pair kick (/pad/kick),

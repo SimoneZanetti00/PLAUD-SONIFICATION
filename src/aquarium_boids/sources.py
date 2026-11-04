@@ -15,10 +15,10 @@ from pygame.math import Vector2
 from .boids import Boid
 from .config import BOID_COUNT, CONTROL_PORT, HEIGHT, OSC_HOST, OSC_PORT, PLAIN_UDP_PORT, WIDTH
 from .controls import RuntimeControls
-from .replay.calibrate import Normaliser, calibrate_descriptors, calibrate_speed_force
+from .replay.calibrate import Normaliser, calibrate_descriptors, calibrate_speed_force, percentile, sample_times
 from .replay.events import EventDetector, EventParams
 from .replay.interp import DataClock, Piece, Trajectories, per_frame
-from .replay.mapping import Person, SceneMapping, Terrain
+from .replay.mapping import Person, SceneMapping, Terrain, count_range
 from .replay.loader import data_bounds, fit_to_world, load_trajectories, resolve_format, to_world
 
 REPLAY_MARGIN = 60.0  # world px kept free around the data (same as the joystick margin)
@@ -170,9 +170,12 @@ class ReplaySource:
       most accelerating person, so main.py sends /fx/predator 1 and the renderers draw the
       rings there; controls.predator_strength follows the event (restored after it). The repeller
       exerts no force: the data already contains the people's reaction.
-    - Sound profile (profile="scene", --replay-profile scene; replay/mapping.py): territory from the
-      crowd's state, presence on /mix/master, grain density from the walking cadence, arrivals and
-      pairs walking together as events; main.py reads mapping_values() and take_pad_samples().
+    - Sound profile (profile="scene", --replay-profile scene; replay/mapping.py): territory from
+      feature targets (count, speed, direction disorder), PLAUD loudness / lim / centroid / str from
+      count, speed and closeness, presence on /mix/master, grain density from the walking cadence,
+      arrivals and pairs walking together as events; main.py reads mapping_values(),
+      take_pad_samples() and take_kicks(). The count is relative to the file's p5..p95 of people on
+      screen (sampled every 0.1 s, like the speed calibration).
       The default "synthfish" keeps the standard mapping (and its OSC output) unchanged.
     """
 
@@ -219,8 +222,12 @@ class ReplaySource:
             raise ValueError(f"unknown sound profile {profile!r}")
         self.profile = profile
         self.world = world
-        self.mapping = SceneMapping(max_count=max(1, min(dataset.max_population, max_agents)), terrain=terrain) \
-            if profile == "scene" else None
+        self.mapping = None
+        if profile == "scene":
+            counts = [min(len(self.trajectories.active(t)), max_agents) for t in sample_times(self.trajectories, 0.1)]
+            self.count_p5_p95 = (percentile(counts, 0.05), percentile(counts, 0.95)) if counts else (1.0, 15.0)
+            self.mapping = SceneMapping(max_count=max(1, min(dataset.max_population, max_agents)), terrain=terrain,
+                                        count_range=count_range(*self.count_p5_p95))
         self._map_t: float | None = None
         self._pan_camera = None  # profile scene + camera / video view: pan from the video column
         self._pan_size = (1, 1)
@@ -343,13 +350,11 @@ class ReplaySource:
             people.append(Person(f"{piece.track_id}#{piece.index}", b.position.x / scale, b.position.y / scale,
                                  b.velocity.x * to_ms, b.velocity.y * to_ms, pan, b.position.x, b.position.y, visible))
         self._pans = [p.pan for p in people]
-        ref = self.calibration.max_speed
         n = len(self.agents)
-        hurry = min(1.0, sum(b.velocity.length() for b in self.agents) / n / ref) if n and ref > 0 else 0.0
         p95_accel = self.calibration.max_force * 6.0
         agitation = min(1.0, sum(b.acceleration.length() for b in self.agents) / n / p95_accel) \
             if n and p95_accel > 0 else 0.0
-        self.mapping.update(t, dt, people, hurry, agitation)
+        self.mapping.update(t, dt, people, agitation)
 
     def mapping_values(self) -> dict | None:
         """Profile scene: the values main.py sends instead of the standard ones; None otherwise.
@@ -359,7 +364,7 @@ class ReplaySource:
             return None
         tx, ty_up = m.territory
         return {"xy": (tx, 1.0 - ty_up), "density": m.density, "master": m.master, "temp": m.temp,
-                "loudness": m.loudness, "limit": m.limit, "centroid": m.centroid}
+                "loudness": m.loudness, "limit": m.limit, "centroid": m.centroid, "stretch": m.stretch}
 
     def fish_x_values(self) -> list[float] | None:
         """Profile scene: /gran/fish_x as the pan across the displayed picture (slot order); None otherwise."""
@@ -463,9 +468,12 @@ class ReplaySource:
         if m is None:
             return []
         db = 70.0 * (m.master - 1.0)
-        return [f"sound scene | PLAUD territory {m.territory[0]:.2f}/{m.territory[1]:.2f} (hurry {m.hurry:.2f}, "
-                f"crowding {m.crowding:.2f}) | loudness {m.loudness:.2f} | lim {m.limit:.2f} | centroid "
-                f"{m.centroid:.2f} | L2 {m.temp:.2f} | presence {'silent' if m.master <= 0 else f'{db:.0f} dB'}",
+        lo, hi = m.count_range
+        return [f"sound scene | count {m.count01:.2f} ({m.count} people, file {lo:.0f}-{hi:.0f}) | speed "
+                f"{m.speed01:.2f} | disorder {m.disorder:.2f} | closeness {m.closeness:.2f}",
+                f"PLAUD | territory {m.territory[0]:.2f}/{m.territory[1]:.2f} | loudness {m.loudness:.2f} | lim "
+                f"{m.limit:.2f} | str {m.stretch:.2f} | centroid {m.centroid:.2f} | L2 {m.temp:.2f} | "
+                f"{'silent' if m.master <= 0 else f'{db:.0f} dB'}",
                 f"sound events | grains {m.step_rate:.1f} Hz | arrivals {m.arrivals_sent}/{m.arrivals_seen}, "
                 f"together {m.together_sent}/{m.together_seen}"]
 

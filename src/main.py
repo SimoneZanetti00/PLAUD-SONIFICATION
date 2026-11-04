@@ -485,7 +485,7 @@ def main(argv: list[str] | None = None) -> None:
                                       temp=None if mapped is None else mapped["temp"],
                                       loudness=None if mapped is None else mapped["loudness"])
             if mapped is not None:
-                osc.send_plaud_bend(mapped["limit"], mapped["centroid"])
+                osc.send_plaud_bend(mapped["limit"], mapped["centroid"], mapped["stretch"])
                 osc.send_mix("/mix/master", mapped["master"])
             if predator_active:
                 osc.send_fx_predator_strength(controls)
