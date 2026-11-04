@@ -306,7 +306,7 @@ def replay_camera(args: argparse.Namespace, replay: ReplaySource | None = None):
         print(f"[replay] {args.replay_view} view not available: {why}; using the map view")
         return None, None
     if args.replay_view == "video":
-        from aquarium_boids.replay.video import VideoFrames  # cv2 is imported only inside
+        from aquarium_boids.replay.video import AHEAD_FRAMES, VideoFrames  # cv2 is imported only inside
 
         if pixels:
             path, why = (Path(video_file), "") if video_file is not None else (None, "no --replay-video FILE")
@@ -316,7 +316,15 @@ def replay_camera(args: argparse.Namespace, replay: ReplaySource | None = None):
             path, why = find_video(args.replay, args.replay_camera_dir)
         if path is not None:
             try:
-                video = VideoFrames(path, dim=CAMERA_DIM)
+                if pixels:  # data in image pixels (ants): read-ahead, and the dark look precomputed if given
+                    dark = config.video_dark if config is not None and config.video_dark else None
+                    if dark is not None and not dark.is_file():
+                        print(f"[replay] missing {dark}; the dark look is computed live")
+                        dark = None
+                    video = VideoFrames(path, dim=CAMERA_DIM, dark_path=dark, ahead=AHEAD_FRAMES,
+                                        loop=replay is not None and replay.loop)
+                else:
+                    video = VideoFrames(path, dim=CAMERA_DIM)
             except RuntimeError as exc:
                 why = str(exc)
             else:

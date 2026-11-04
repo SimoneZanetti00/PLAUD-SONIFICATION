@@ -14,6 +14,14 @@ jumps) is a seek, which can take ~0.1-0.3 s on zara01: meanwhile the previous fr
 
 Looks: "normal" (dimmed colour) or "dark" (grey and darker, with what moves since the previous
 decoded frame brought back in colour, so the walking people stand out from the street).
+
+Optional, off by default (the ETH/UCY videos use neither):
+- dark_path: a second video with the dark look already applied (tools/convert_ants.py writes it,
+  with this module's own dark function on consecutive frames), read instead of computing the look
+  live, which costs ~60-100 ms per 1280x720 frame;
+- ahead > 0: read-ahead. Once the wanted frame is decoded, the thread keeps decoding the next
+  `ahead` frames (same size and look; wrapping to frame 0 with loop=True) into a small cache, so a
+  short stall of the decoder does not show and a loop wrap needs no seek.
 """
 from __future__ import annotations
 
@@ -28,6 +36,7 @@ MOTION_THRESHOLD = 7  # grey levels of change below this are noise (compression,
 MOTION_GAIN = 14.0  # how fast the mask reaches full colour above the threshold
 MOTION_GROW = 11  # px: the mask is dilated by this square, so whole bodies (not only their edges) keep colour
 INSTALL_HINT = "pip install -r requirements-video.txt (OpenCV)"
+AHEAD_FRAMES = 8  # read-ahead used for the videos in image pixels (ants)
 
 
 def import_cv2():
@@ -42,7 +51,8 @@ def import_cv2():
 class VideoFrames:
     """Decodes frames of one video on request, scaled, dimmed and converted to RGB bytes."""
 
-    def __init__(self, path: str | Path, dim: int = 255, threaded: bool = True):
+    def __init__(self, path: str | Path, dim: int = 255, threaded: bool = True,
+                 dark_path: str | Path | None = None, ahead: int = 0, loop: bool = False):
         cv2, why = import_cv2()
         if cv2 is None:
             raise RuntimeError(why)
@@ -63,6 +73,17 @@ class VideoFrames:
         self._gray_now: tuple[int, object] | None = None  # (index, grey) of the last frame seen by _dark
         self._gray_before: tuple[int, object] | None = None  # (index, grey) of the frame before it
         self.seeks = 0
+        self._dark_cap = None  # dark_path: the dark look read from a second video
+        if dark_path is not None:
+            self._dark_cap = cv2.VideoCapture(str(dark_path))
+            if not self._dark_cap.isOpened():
+                raise RuntimeError(f"cannot open {dark_path}")
+        self._dark_pos = 0
+        self._dark_raw: tuple[int, object] | None = None
+        self.ahead = max(0, int(ahead))
+        self.loop = loop
+        self._cache: dict[tuple[int, tuple[int, int], str], bytes] = {}  # read-ahead frames
+        self.cache_hits = 0
         self._lock = threading.Lock()
         self._wake = threading.Condition(self._lock)
         self._closed = False
@@ -88,6 +109,11 @@ class VideoFrames:
         with self._wake:
             if want != self._want:
                 self._want = want
+                cached = self._cache.get(want)
+                if cached is not None:  # read ahead: ready at once
+                    self._latest = (*want, cached)
+                    self._done = want
+                    self.cache_hits += 1
                 self._wake.notify()
 
     def latest(self) -> tuple[int, tuple[int, int], str, bytes] | None:
@@ -102,25 +128,64 @@ class VideoFrames:
         if self._thread is not None:
             self._thread.join(timeout=1.0)
         self._cap.release()
+        if self._dark_cap is not None:
+            self._dark_cap.release()
 
     def _run(self) -> None:
         while True:
             with self._wake:
+                job = None
                 while not self._closed and (self._want is None or self._want == self._done):
+                    job = self._next_ahead()
+                    if job is not None:
+                        break
                     self._wake.wait()
                 if self._closed:
                     return
                 want = self._want
-            data = self._decode(*want)
+                if want != self._done:
+                    job = want
+            data = self._decode(*job)
             with self._lock:
-                self._latest = (*want, data)
-                self._done = want
+                if job == want:
+                    self._latest = (*want, data)
+                    self._done = want
+                if self.ahead:
+                    self._keep(job, data)
+
+    def _next_ahead(self) -> tuple[int, tuple[int, int], str] | None:
+        """Read ahead (under the lock): the first of the next `ahead` frames not decoded yet, or None."""
+        if not self.ahead or self._done is None:
+            return None
+        index, size, look = self._done
+        for k in range(1, self.ahead + 1):
+            j = index + k
+            if j >= self.count:
+                if not self.loop:
+                    return None
+                j -= self.count
+            if (j, size, look) not in self._cache:
+                return (j, size, look)
+        return None
+
+    def _keep(self, job: tuple[int, tuple[int, int], str], data: bytes) -> None:
+        """Cache a decoded frame (under the lock); drop frames outside the window ahead of the wanted one."""
+        self._cache[job] = data
+        if self._want is None:
+            return
+        index, size, look = self._want
+        window = {((index + k) % self.count if self.loop else index + k, size, look) for k in range(self.ahead + 1)}
+        for key in [key for key in self._cache if key not in window]:
+            del self._cache[key]
 
     def _decode(self, index: int, size: tuple[int, int], look: str = "normal") -> bytes:
         cv2 = self._cv2
-        img = self._read(index)
-        if look == "dark":
-            img = self._dark(index, img)
+        if look == "dark" and self._dark_cap is not None:
+            img = self._read_dark(index)
+        else:
+            img = self._read(index)
+            if look == "dark":
+                img = self._dark(index, img)
         if (img.shape[1], img.shape[0]) != size:
             img = cv2.resize(img, size, interpolation=cv2.INTER_LINEAR)
         if look == "normal" and self.dim < 255:
@@ -144,6 +209,25 @@ class VideoFrames:
         if not ok:
             img = self._blank()
         self._raw = (index, img)
+        return img
+
+    def _read_dark(self, index: int):
+        """Frame `index` of the dark video (dark_path), like _read."""
+        if self._dark_raw is not None and self._dark_raw[0] == index:
+            return self._dark_raw[1]
+        cv2, cap = self._cv2, self._dark_cap
+        step = index - self._dark_pos
+        if 0 <= step <= MAX_GRAB:
+            for _ in range(step):
+                cap.grab()
+        else:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, index)
+            self.seeks += 1
+        ok, img = cap.read()
+        self._dark_pos = index + 1
+        if not ok:
+            img = self._blank()
+        self._dark_raw = (index, img)
         return img
 
     def _dark(self, index: int, img):

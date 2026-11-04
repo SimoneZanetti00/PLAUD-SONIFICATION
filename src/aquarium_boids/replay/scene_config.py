@@ -17,7 +17,8 @@ Read here:
   config's own "places" (its nest keys, e.g. only r, win over the file's; its food list replaces it);
 - events: which events apply to this dataset (used by the ant sound mapping, next step);
 - image / video: a still frame and a video in the data's pixel coordinates (no homography), for
-  the camera / video views; --replay-image / --replay-video override them.
+  the camera / video views; --replay-image / --replay-video override them. video_dark: the same
+  video with the dark look already applied (tools/convert_ants.py), read for the V dark look;
 Relative paths are relative to the config file.
 """
 from __future__ import annotations
@@ -34,7 +35,7 @@ DEFAULT_NEST_RADIUS_BL = 10.0  # nest radius when none is given, in body lengths
 DEFAULT_GRID_BL = 10.0  # map grid step when none is given, in body lengths
 KEYS = {"name", "citation", "reference", "agents", "units", "body_length", "body_length_is_estimate",
         "flip_y", "grid", "thresholds", "places_file", "places", "events", "image", "video",
-        "image_credit", "video_credit", "smooth_s", "path_s", "comment"}
+        "image_credit", "video_credit", "video_dark", "smooth_s", "path_s", "comment"}
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,7 @@ class SceneConfig:
     events: dict[str, object] = field(default_factory=dict)
     image: Path | None = None
     video: Path | None = None
+    video_dark: Path | None = None
     image_credit: str | None = None
     video_credit: str | None = None
 
@@ -248,4 +250,5 @@ def load_scene_config(path: str | Path) -> SceneConfig:
     kw["events"] = dict(events)
     kw["image"] = rel(data.get("image"), "image")
     kw["video"] = rel(data.get("video"), "video")
+    kw["video_dark"] = rel(data.get("video_dark"), "video_dark")
     return SceneConfig(**kw)

@@ -7,7 +7,9 @@ ANTS (Wu et al. 2022, GigaScience; CC0): one sequence folder with seqinfo.ini, g
   is the box centre (left + w/2, top + h/2), in image pixels, y down (no flip, no homography).
   frame = gt frame - 1, so frame 0 is img/000001.jpg and is video frame 0; t = frame / frameRate
   of the sequence's seqinfo.ini (25 indoor, 30 outdoor). --video builds <name>.mp4 from img/
-  (needs OpenCV, requirements-video.txt), at the same frame rate.
+  (needs OpenCV, requirements-video.txt), at the same frame rate, and <name>.dark.mp4: the same
+  frames in the replay's dark look (grey, moving ants in colour), made with the replay's own
+  function on consecutive frames, so the V key needs no live processing.
 
 Foraging Ants as Liquid Brains (Fernandez-Lopez et al. 2025, PNAS; data CC BY 4.0):
     python tools/convert_ants.py liquid <TRIAL.csv> --hex <hex.csv> --out <OUT_DIR>
@@ -183,6 +185,25 @@ def build_video(img_dir: Path, fps: float, out: Path) -> int:
     return len(images)
 
 
+def build_dark_video(video: Path, fps: float, out: Path) -> int:
+    """<name>.mp4 -> <name>.dark.mp4 in the replay's dark look (replay/video.py), frame by frame."""
+    import cv2  # noqa: PLC0415
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+    from aquarium_boids.replay.video import VideoFrames  # noqa: PLC0415
+
+    frames = VideoFrames(video, threaded=False)
+    writer = cv2.VideoWriter(str(out), cv2.VideoWriter_fourcc(*"mp4v"), fps, frames.size)
+    if not writer.isOpened():
+        raise RuntimeError(f"cannot write {out}")
+    try:
+        for i in range(frames.count):  # consecutive frames: the motion mask always has its previous frame
+            writer.write(frames._dark(i, frames._read(i)))
+    finally:
+        writer.release()
+        frames.close()
+    return frames.count
+
+
 def convert_ants(seq_dir: Path, out_dir: Path, video: bool) -> None:
     info = read_seqinfo(seq_dir / "seqinfo.ini")
     fps = float(info["framerate"])
@@ -208,7 +229,10 @@ def convert_ants(seq_dir: Path, out_dir: Path, video: bool) -> None:
         mp4 = out_dir / f"{name}.mp4"
         n = build_video(seq_dir / "img", fps, mp4) if not mp4.exists() else None
         print(f"  video {mp4.name}: " + ("kept (exists)" if n is None else f"{n} frames at {fps:g} fps"))
-        config["video"] = mp4.name
+        dark = out_dir / f"{name}.dark.mp4"
+        n = build_dark_video(mp4, fps, dark) if not dark.exists() else None
+        print(f"  dark look {dark.name}: " + ("kept (exists)" if n is None else f"{n} frames"))
+        config["video"], config["video_dark"] = mp4.name, dark.name
     if write_json_once(out_dir / f"{name}.scene.json", config):
         print(f"  starter config {name}.scene.json")
 

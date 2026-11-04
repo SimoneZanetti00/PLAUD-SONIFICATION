@@ -55,7 +55,7 @@ the data, a places file (Liquid Brains) and a starter scene config `<name>.scene
 that already exists is kept, so you can edit it.
 
 ```
-# ANTS: one or more sequence folders; --video also builds <name>.mp4 from img/ (OpenCV)
+# ANTS: one or more sequence folders; --video also builds <name>.mp4 from img/ and <name>.dark.mp4 (OpenCV)
 python tools/convert_ants.py ants <DATA>/ants/ANTS/Ant_dataset/OutdoorDataset/Seq0009Object50Image64 --out <DATA>/ants/converted/ants --video
 
 # Liquid Brains: a Food trial with its food items, and a No-Food trial
@@ -112,6 +112,7 @@ written by the converter:
 | `places.food` | a list of `{x, y, patch, t}`; replaces the places file's food | drawn |
 | `events` | which events apply: `arrivals` (`anywhere`, `nest` or `off`), `food_discovery`, `recruitment`, `encounters` (true / false); `together` is not used for ants | sound |
 | `image`, `video` | a frame and a video in the data's pixel coordinates (camera / video views); `--replay-image`, `--replay-video` override them | yes |
+| `video_dark` | the same video with the dark look already applied (`<name>.dark.mp4`, written by the converter with `--video`), read for the `V` dark look instead of computing it live | yes |
 | `image_credit`, `video_credit` | credit shown in the caption in those views | yes |
 | `comment` | free text, ignored | |
 
@@ -156,7 +157,11 @@ python src/main.py --replay <FILE>.csv --replay-view video --replay-image <FRAME
   move over it.
 - **Video** (`--replay-view video`): the video from `--replay-video` (or the config's `video`),
   frame = fps × data time, so frame 0 is the first jpg. It needs an image too (the camera view is
-  the fallback). The `V` key (normal, dark, off) works as for the pedestrians.
+  the fallback). The `V` key (normal, dark, off) works as for the pedestrians. For these videos the
+  decoder reads 8 frames ahead (and wraps to frame 0 ahead of time with `--replay-loop`), and the
+  dark look comes from `video_dark` when the config has it: computing it live costs 60–100 ms per
+  1280×720 frame, so only about 12 of the 30 frames per second reached the screen; read from the
+  dark video it costs about 5 ms and all 30 do.
 - Keys are those of the pedestrian replay ([REPLAY.md](REPLAY.md)). The flashes of the ant
   profile (food found on its item, recruitment wave on the nest, arrivals on the ant) last 1.2 s of
   playback time, whatever `--replay-speed`.

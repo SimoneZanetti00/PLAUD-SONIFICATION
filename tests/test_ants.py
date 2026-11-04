@@ -162,8 +162,10 @@ class SceneConfigFile(unittest.TestCase):
 
     def test_relative_paths(self):
         with tempfile.TemporaryDirectory() as d:
-            c = load_scene_config(write_json(Path(d) / "sub" / "c.json", {"image": "f.jpg", "video": "../v.mp4"}))
+            c = load_scene_config(write_json(Path(d) / "sub" / "c.json", {"image": "f.jpg", "video": "../v.mp4",
+                                                                           "video_dark": "v.dark.mp4"}))
             self.assertEqual(c.image, Path(d) / "sub" / "f.jpg")
+            self.assertEqual(c.video_dark, Path(d) / "sub" / "v.dark.mp4")
             self.assertEqual(c.video, Path(d) / "sub" / ".." / "v.mp4")
 
     def test_errors(self):
