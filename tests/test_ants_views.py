@@ -1,11 +1,12 @@
 """Offline tests for the ant views: video read-ahead and precomputed dark look (replay/video.py),
-and the dark video written by tools/convert_ants.py.
+the dark video written by tools/convert_ants.py, and the N social graph in body lengths.
 
 Synthetic files only. SDL dummy driver, no window. The video tests are skipped without OpenCV.
 Run from the repository root:  python -m unittest discover -s tests -v
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -19,8 +20,16 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tools"))
 
+import pygame  # noqa: E402
+
 import convert_ants as conv  # noqa: E402
+from aquarium_boids.controls import RuntimeControls  # noqa: E402
+from aquarium_boids.render import View  # noqa: E402
+from aquarium_boids.render_data import GRAPH_NEAR_COLOR, GRAPH_TOGETHER_COLORS, DataRenderer  # noqa: E402
+from aquarium_boids.replay.ant_mapping import ant_together  # noqa: E402
+from aquarium_boids.replay.scene_config import load_scene_config  # noqa: E402
 from aquarium_boids.replay.video import VideoFrames, import_cv2  # noqa: E402
+from aquarium_boids.sources import ReplaySource  # noqa: E402
 
 cv2, _ = import_cv2()
 FRAMES, W, H = 40, 64, 48
@@ -121,6 +130,50 @@ class ReadAhead(unittest.TestCase):
         finally:
             live.close()
             baked.close()
+
+
+class AntGraph(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        pygame.init()
+        cls.screen = pygame.display.set_mode((1200, 750))
+        cls.font = pygame.font.SysFont("consolas", 16)
+
+    def test_rule_in_body_lengths(self):
+        self.assertTrue(ant_together(2.0, (2.0, 0.0), (2.3, 0.2), 1.0))
+        self.assertFalse(ant_together(3.5, (2.0, 0.0), (2.0, 0.0), 1.0))  # too far
+        self.assertFalse(ant_together(1.0, (0.5, 0.0), (2.0, 0.0), 1.0))  # one standing
+        self.assertFalse(ant_together(1.0, (2.0, 0.0), (0.0, 2.0), 1.0))  # other way
+        self.assertFalse(ant_together(1.0, (1.2, 0.0), (3.0, 0.0), 1.0))  # different pace
+
+    def test_graph_connects_ants_walking_together_and_not_far_ones(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            rows = ["id,frame,t,x,y"]
+            for f in range(40):  # a and b side by side, 1 BL (6 mm) apart, 2 BL/s; c far away
+                t = f * 0.25
+                rows += [f"a,{f},{t},{12 * t},100", f"b,{f},{t},{12 * t},106", f"c,{f},{t},{12 * t},400"]
+            (d / "t.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+            (d / "t.json").write_text(json.dumps({"units": "mm", "body_length": 6}), encoding="utf-8")
+            src = ReplaySource(d / "t.csv", events=False, config=load_scene_config(d / "t.json"))
+            r = DataRenderer(self.font, src, mode="art")
+            r.graph = True
+            view = View((1200, 750), (1200, 750))
+            c = RuntimeControls()
+            canvas = pygame.Surface((1200, 750))
+            colours = set()
+            for _ in range(60 * 4):  # 4 data seconds
+                r.draw(canvas, view, src.step(1.0, c, None, None), None, None, c, {})
+            a, b, cc = (next(bb for bb, p in zip(src.agents, src._pieces) if p.track_id == k) for k in "abc")
+            mid = ((a.position.x + b.position.x) / 2, (a.position.y + b.position.y) / 2)
+            for dx in range(-3, 4):
+                for dy in range(-3, 4):
+                    colours.add(tuple(canvas.get_at((round(mid[0]) + dx, round(mid[1]) + dy)))[:3])
+            self.assertIn(GRAPH_TOGETHER_COLORS[1], colours)  # walking together for > 2 s: full line
+            self.assertGreater(len(r._together), 0)
+            self.assertEqual([k for k in r._together if "c" in k], [])
+            far = {tuple(canvas.get_at((round((a.position.x + cc.position.x) / 2), round((a.position.y + cc.position.y) / 2))))[:3]}
+            self.assertNotIn(GRAPH_NEAR_COLOR, far)
 
 
 if __name__ == "__main__":

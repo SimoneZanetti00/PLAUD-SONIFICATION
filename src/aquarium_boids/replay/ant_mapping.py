@@ -57,6 +57,22 @@ ARRIVAL_MIN_GAP_S = 8.0  # playback seconds between arrival slices
 FOOD_MIN_GAP_S = 0.5  # playback seconds between food slices (none is dropped: they wait)
 EVENT_KEEP = 32
 STEP_RANGE_S = (0.1, 0.5)  # data seconds between scene checks: duration / 20000, within this range
+# "Walking together" for ants (the N social graph, render_data.py): close, both moving, same way, same pace
+ANT_NEAR_BL = 3.0  # body lengths: closer than this -> a thin line
+ANT_HEADING_COS = math.cos(math.radians(30))
+ANT_SPEED_DIFF_BL_S = 0.75  # BL/s
+ANT_TOGETHER_S = (0.5, 2.0)  # data seconds walking together: the line starts to thicken .. fully bright
+ANT_BREAK_DECAY = 2.0  # a short break (still close, not together) lowers the timer at this rate instead of resetting it
+
+
+def ant_together(dist_bl: float, va: tuple[float, float], vb: tuple[float, float], moving_bl_s: float) -> bool:
+    """Two ants walk together: closer than ANT_NEAR_BL, both at least `moving_bl_s` (the config's
+    standing threshold), headings within 30 deg, speeds within ANT_SPEED_DIFF_BL_S. Velocities in BL/s."""
+    sa, sb = math.hypot(*va), math.hypot(*vb)
+    if dist_bl >= ANT_NEAR_BL or sa < moving_bl_s or sb < moving_bl_s:
+        return False
+    cos = (va[0] * vb[0] + va[1] * vb[1]) / (sa * sb)
+    return cos > ANT_HEADING_COS and abs(sa - sb) < ANT_SPEED_DIFF_BL_S
 
 
 @dataclass

@@ -18,7 +18,11 @@ arrives, and while a seek runs, the reference frame or the previous video frame 
 Optional layers, all off at start (so the look above is unchanged), in every view:
 - N: social graph. A thin line between two people closer than 2 m; when they walk together
   (heading within 30 deg, speed within 0.3 m/s, both moving) for 2 s the line gets thicker and
-  brighter, up to 6 s. Timers run in data time.
+  brighter, up to 6 s. Timers run in data time. With a scene config (ants) the same in body
+  lengths: closer than 3 BL, both faster than the config's standing threshold, heading within
+  30 deg, speed within 0.75 BL/s (replay/ant_mapping.ant_together); ants weave and pause, so the
+  line thickens from 0.5 to 2 s, and a short break (still close) lowers the timer at twice the
+  rate instead of resetting it. Display only.
 - L: long exposure. Every person leaves light along the way they walk (per distance, so standing
   adds nothing); it fades by one grey level every 4 s of data time: one pass stays visible about
   1.5 minutes, a much-used route (saturated) about 17 minutes. The street's habitual routes build up.
@@ -42,6 +46,7 @@ from pygame.math import Vector2
 
 from .controls import RuntimeControls
 from .render import View, draw_caption, draw_hud
+from .replay.ant_mapping import ANT_BREAK_DECAY, ANT_NEAR_BL, ANT_TOGETHER_S, ant_together
 from .replay.mapping import TOGETHER_NEAR_M, together_rule
 from .sources import EVENT_FLASH_S
 
@@ -315,13 +320,27 @@ class DataRenderer:
         """Lines between people closer than GRAPH_NEAR_M; thicker and brighter while they walk together."""
         scale = self.source.transform.scale  # world px per metre
         to_ms = 60.0 / self.source.speed / scale  # px/frame -> m/s
+        bl = self.source.body_length
+        config = self.source.config
+        if bl and config is not None:  # ants: the rule in body lengths
+            scale *= bl  # world px per body length
+            to_ms /= bl  # px/frame -> BL/s
+            moving = config.standing_bl_s
+
+            def rule(dist: float, va: tuple[float, float], vb: tuple[float, float]) -> bool:
+                return ant_together(dist, (va[0] * to_ms, va[1] * to_ms), (vb[0] * to_ms, vb[1] * to_ms), moving)
+            near, hold, decay = ANT_NEAR_BL, ANT_TOGETHER_S, ANT_BREAK_DECAY
+        else:
+            def rule(dist: float, va: tuple[float, float], vb: tuple[float, float]) -> bool:
+                return walking_together(dist, va, vb, to_ms)
+            near, hold, decay = GRAPH_NEAR_M, GRAPH_TOGETHER_S, None
         people = []
         for boid, track_id, _ in overlay:
             here = project(boid.position.x, boid.position.y)
             if here is not None:
                 people.append((track_id, boid.position, (boid.velocity.x, boid.velocity.y), here))
         together: dict[tuple[str, str], float] = {}
-        near_px = GRAPH_NEAR_M * scale
+        near_px = near * scale
         for i in range(len(people)):
             ida, pa, va, ca = people[i]
             for j in range(i + 1, len(people)):
@@ -330,10 +349,12 @@ class DataRenderer:
                 if dist_px >= near_px:
                     continue
                 key = (ida, idb) if ida < idb else (idb, ida)
-                if walking_together(dist_px / scale, va, vb, to_ms):
+                if rule(dist_px / scale, va, vb):
                     together[key] = self._together.get(key, 0.0) + dt
+                elif decay is not None and self._together.get(key, 0.0) > decay * dt:  # ants: a short break
+                    together[key] = self._together[key] - decay * dt
                 seconds = together.get(key, 0.0)
-                lo, hi = GRAPH_TOGETHER_S
+                lo, hi = hold
                 if seconds >= lo:
                     f = min(1.0, (seconds - lo) / (hi - lo))
                     color = _lerp(GRAPH_TOGETHER_COLORS, f)

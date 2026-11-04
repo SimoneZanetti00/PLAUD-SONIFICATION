@@ -162,6 +162,13 @@ python src/main.py --replay <FILE>.csv --replay-view video --replay-image <FRAME
   dark look comes from `video_dark` when the config has it: computing it live costs 60–100 ms per
   1280×720 frame, so only about 12 of the 30 frames per second reached the screen; read from the
   dark video it costs about 5 ms and all 30 do.
+- **N** (social graph) in body lengths with a scene config: a thin line between two ants closer
+  than 3 BL; when they walk together (both faster than `standing_bl_s`, heading within 30°, speed
+  within 0.75 BL/s) the line thickens from 0.5 to 2 s of data time, and a short break (still
+  close) lowers the timer at twice the rate instead of resetting it, because ants weave and pause.
+  Display only: the OSC output is the same with N on or off. Around the Seq0009 nest almost every
+  ant is within 3 BL of another, so the graph there is a dense contact web; in the maze ants are
+  usually far apart and lines are rare.
 - Keys are those of the pedestrian replay ([REPLAY.md](REPLAY.md)). The flashes of the ant
   profile (food found on its item, recruitment wave on the nest, arrivals on the ant) last 1.2 s of
   playback time, whatever `--replay-speed`.
