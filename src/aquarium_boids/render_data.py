@@ -342,7 +342,7 @@ class DataRenderer:
 
     def _draw_agents(self, canvas: pygame.Surface, project: Projector, k: float, dt: float = 0.0) -> None:
         """Paths, then dots with heading ticks (and labels), through `project`; k = px per world px."""
-        overlay = self.source.overlay(PATH_SECONDS)
+        overlay = self.source.overlay(self.source.path_s or PATH_SECONDS)
         for boid, track_id, path in overlay:  # paths first, under every dot
             points = [q for q in (project(x, y) for x, y in path) if q is not None]
             if len(points) >= 2:

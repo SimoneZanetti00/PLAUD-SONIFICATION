@@ -19,7 +19,7 @@ from .replay.calibrate import Normaliser, calibrate_descriptors, calibrate_speed
 from .replay.events import EventDetector, EventParams
 from .replay.interp import DataClock, Piece, Trajectories, per_frame
 from .replay.mapping import Person, SceneMapping, Terrain, count_range
-from .replay.loader import data_bounds, fit_to_world, load_trajectories, resolve_format, to_world
+from .replay.loader import data_bounds, fit_to_world, load_trajectories, resolve_format, smooth_dataset, to_world
 from .replay.scene_config import FoodItem, SceneConfig
 
 REPLAY_MARGIN = 60.0  # world px kept free around the data (same as the joystick margin)
@@ -204,6 +204,8 @@ class ReplaySource:
         if max_agents < 1:
             raise ValueError(f"max agents must be >= 1, got {max_agents}")
         dataset = load_trajectories(path, fmt=fmt, fps=fps)
+        if config is not None and config.smooth_s:  # dense, jittery tracking: averaged before the spline
+            dataset = smooth_dataset(dataset, config.smooth_s)
         flip_y = flip_y or (config is not None and config.flip_y)
         transform = fit_to_world(data_bounds(dataset), world, REPLAY_MARGIN, flip_y=flip_y)
         self.trajectories = Trajectories(to_world(dataset, transform))
@@ -218,6 +220,7 @@ class ReplaySource:
         self.noun = "people"  # HUD: who is on screen
         self.body_length: float | None = None  # data units, from a scene config
         self.grid_step: float | None = None  # map grid step in data units (None: the renderer's 1 unit)
+        self.path_s: float | None = None  # seconds of path behind each agent (None: the renderer's default)
         if config is not None:
             self.scene = config.name or self.scene
             self.citation = config.citation or self.citation
@@ -227,6 +230,7 @@ class ReplaySource:
             self.noun = config.agents
             self.body_length = config.body_length
             self.grid_step = config.grid_step
+            self.path_s = config.path_s
         self.transform = transform  # data units <-> world px, for the metric grid of the data look
         self._places_world(config)
         self.loop = loop

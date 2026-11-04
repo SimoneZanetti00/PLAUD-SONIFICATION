@@ -223,6 +223,34 @@ def _build(path: Path, rows, fps: float, frame_step: int | None) -> Dataset:
     return Dataset(tracks=ordered, fps=fps, frame_step=step)
 
 
+def smooth_dataset(dataset: Dataset, window_s: float) -> Dataset:
+    """Centred moving average of x and y over about `window_s` seconds, within each run of consecutive
+    frames (a missing row starts a new run); times are kept. For dense, jittery tracking (e.g. box
+    centres at 25-30 fps) before the spline: a centred window adds no lag. The window is an odd number
+    of rows (2 x round(window_s x rate / 2) + 1, the rate from the run's median time step), shrunk
+    symmetrically at the ends of a run so the average stays centred."""
+    if window_s <= 0:
+        return dataset
+    tracks = {}
+    for tid, samples in dataset.tracks.items():
+        runs: list[list[Sample]] = []
+        for s in samples:
+            if runs and s.frame - runs[-1][-1].frame <= dataset.frame_step:
+                runs[-1].append(s)
+            else:
+                runs.append([s])
+        out: list[Sample] = []
+        for run in runs:
+            steps = sorted(b.t - a.t for a, b in zip(run, run[1:]))
+            half = round(window_s / steps[len(steps) // 2] / 2) if steps else 0
+            for i, s in enumerate(run):
+                h = min(half, i, len(run) - 1 - i)
+                part = run[i - h:i + h + 1]
+                out.append(Sample(s.t, s.frame, sum(p.x for p in part) / len(part), sum(p.y for p in part) / len(part)))
+        tracks[tid] = tuple(out)
+    return Dataset(tracks=tracks, fps=dataset.fps, frame_step=dataset.frame_step)
+
+
 def data_bounds(dataset: Dataset) -> Bounds:
     xs = [s.x for samples in dataset.tracks.values() for s in samples]
     ys = [s.y for samples in dataset.tracks.values() for s in samples]

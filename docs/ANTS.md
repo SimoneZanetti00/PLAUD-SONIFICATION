@@ -103,6 +103,8 @@ written by the converter:
 | `body_length`, `body_length_is_estimate` | one body length (BL) in those units; the scale bar also shows BL | yes |
 | `flip_y` | the data's y points up (same as `--replay-flip-y`; either one flips) | yes |
 | `grid` | map grid step in data units (default 10 BL; without a body length, 1 unit) | yes |
+| `smooth_s` | centred moving average of the positions over this many seconds, before the spline, within runs of consecutive frames (ANTS: 0.2 s, 7 frames at 30 fps) | yes |
+| `path_s` | seconds of path drawn behind each one (default 10; ANTS: 2) | yes |
 | `thresholds` | in body lengths: `standing_bl_s` (slower = standing), `speed_bl_s` (low, high), `close_bl` (near, far) | read and checked; used by the ant mapping (next step) |
 | `places_file` | a places file (below) | yes |
 | `places.nest` | `x`, `y`, `r` (data units); its keys win over the places file's (e.g. only `r`); default r = 10 BL | drawn |
@@ -121,10 +123,13 @@ the reason.
 "t"}], "maze_edges": [[x1, y1, x2, y2], ...]}`. `t` is the discovery time in data seconds, the
 same clock as the CSV's `t`; `null` = never found.
 
-For ANTS the converter writes `units: "px"`, the box size as the body length, `image` (the first
-jpg) and, with `--video`, `video`. The outdoor sequences have a nest entrance in the picture: its
-place is not in the data, so add it by hand (e.g. `"places": {"nest": {"x": 720, "y": 300, "r":
-128}}` for Seq0009, placed by eye on frame 1).
+For ANTS the converter writes `units: "px"`, the box size as the body length, `smooth_s: 0.2`,
+`path_s: 2`, `image` (the first jpg) and, with `--video`, `video`. Box centres at 25–30 fps
+jitter (a median turn of 48° from one frame to the next on Seq0009); the 0.2 s average brings it
+to about 6° and moves a dot by 7 px at p95 (a tenth of a box), so the dots stay on the ants. The
+outdoor sequences have a nest entrance in the picture: its place is not in the data, so add it by
+hand (e.g. `"places": {"nest": {"x": 720, "y": 300, "r": 128}}` for Seq0009, placed by eye on
+frame 1).
 
 ## Views
 

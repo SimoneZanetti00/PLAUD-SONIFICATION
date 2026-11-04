@@ -8,6 +8,8 @@ Read here:
 - name, citation (short, for the caption), reference (long, for the HUD), agents ("ants");
 - units of x and y ("mm", "px", "m"), body_length (in those units) and whether it is an estimate;
 - flip_y (data y points up), grid (minor grid step in data units, map view);
+- smooth_s: a centred moving average of the positions over this many seconds before the spline
+  (dense, jittery tracking such as ANTS box centres); path_s: seconds of path drawn behind each one;
 - thresholds in body lengths: standing (BL/s), speed range (BL/s), closeness range (BL);
 - places: the nest (x, y, r) and food items (x, y, patch, discovery time t in data seconds), and
   maze edges to draw, from an optional places_file (written by tools/convert_ants.py) and/or the
@@ -31,7 +33,7 @@ DEFAULT_NEST_RADIUS_BL = 10.0  # nest radius when none is given, in body lengths
 DEFAULT_GRID_BL = 10.0  # map grid step when none is given, in body lengths
 KEYS = {"name", "citation", "reference", "agents", "units", "body_length", "body_length_is_estimate",
         "flip_y", "grid", "thresholds", "places_file", "places", "events", "image", "video",
-        "image_credit", "video_credit", "comment"}
+        "image_credit", "video_credit", "smooth_s", "path_s", "comment"}
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,8 @@ class SceneConfig:
     body_length_is_estimate: bool = False
     flip_y: bool = False
     grid: float | None = None
+    smooth_s: float | None = None
+    path_s: float | None = None
     standing_bl_s: float = DEFAULT_THRESHOLDS["standing_bl_s"]
     speed_bl_s: tuple[float, float] = DEFAULT_THRESHOLDS["speed_bl_s"]
     close_bl: tuple[float, float] = DEFAULT_THRESHOLDS["close_bl"]
@@ -174,8 +178,9 @@ def load_scene_config(path: str | Path) -> SceneConfig:
         kw["body_length"] = bl = _number(bl, "body_length", positive=True)
     kw["body_length_is_estimate"] = bool(data.get("body_length_is_estimate", False))
     kw["flip_y"] = bool(data.get("flip_y", False))
-    if data.get("grid") is not None:
-        kw["grid"] = _number(data["grid"], "grid", positive=True)
+    for key in ("grid", "smooth_s", "path_s"):
+        if data.get(key) is not None:
+            kw[key] = _number(data[key], key, positive=True)
 
     th = data.get("thresholds", {})
     if not isinstance(th, dict):

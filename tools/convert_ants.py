@@ -196,6 +196,7 @@ def convert_ants(seq_dir: Path, out_dir: Path, video: bool) -> None:
         "name": name, "citation": ANTS_CITATION, "reference": ANTS_REFERENCE, "agents": "ants", "units": "px",
         "body_length": box, "body_length_is_estimate": True,
         "comment": "pixel coordinates of the image (y down); body length = the annotation box size, an estimate",
+        "smooth_s": 0.2, "path_s": 2,
         "thresholds": {"standing_bl_s": 0.3, "speed_bl_s": [0.5, 5.0], "close_bl": [0.5, 3.0]},
         "events": EVENTS_ANTS,
         "image_credit": "ANTS frame (Wu et al. 2022)", "video_credit": "ANTS video (Wu et al. 2022)",
