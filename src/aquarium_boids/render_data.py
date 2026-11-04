@@ -23,6 +23,12 @@ Optional layers, all off at start (so the look above is unchanged), in every vie
   adds nothing); it fades by one grey level every 4 s of data time: one pass stays visible about
   1.5 minutes, a much-used route (saturated) about 17 minutes. The street's habitual routes build up.
 - V (video view only): video look normal -> dark (grey, darker, moving people in colour) -> off.
+
+Scene config places (--replay-config, e.g. ants), in every view: maze edges (thin lines, baked into
+the grid in the map view), the nest (a ring) and food items (hollow squares, filled once found in
+data time). The grid step comes from the config (default 1 data unit), and the scale bar also
+gives the length in body lengths (BL). --replay-image / --replay-video: the camera / video views for
+data in that image's pixels (replay/camera.py, Camera.pixels).
 """
 from __future__ import annotations
 
@@ -36,7 +42,6 @@ from pygame.math import Vector2
 
 from .controls import RuntimeControls
 from .render import View, draw_caption, draw_hud
-from .replay.camera import VIDEO_CREDIT
 from .replay.mapping import TOGETHER_NEAR_M, together_rule
 from .sources import EVENT_FLASH_S
 
@@ -65,7 +70,7 @@ SPEED_STOPS = ((72, 40, 120), (49, 104, 142), (31, 158, 137), (110, 206, 88), (2
 ID_HUES = 12
 DOT_RADIUS = 3.2  # canvas px at view scale 1
 TICK = (4.5, 10.5)  # heading tick from/to, canvas px at view scale 1
-NICE_LENGTHS = (1, 2, 5, 10, 20, 50, 100)
+NICE_LENGTHS = (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000)
 CAMERA_DIM = 115  # reference frame brightness x115/255
 CAMERA_HEADING_STEP = 0.25  # metres ahead used to find the heading direction in the frame
 SCALE_BAR_MAX_PX = 260  # long enough for 5 m (one major grid cell) in every ETH/UCY scene
@@ -85,6 +90,11 @@ FLASH_COLORS = {"arrival": (120, 220, 255), "together": (255, 205, 110)}
 FLASH_TEXT = {"arrival": "arrival", "together": "walking together"}
 FLASH_RADIUS = (9.0, 30.0)  # ring radius at the start .. end of the flash, canvas px at view scale 1
 LAYER_TEXT = (120, 122, 130)
+# Scene config places
+MAZE_COLOR = (44, 47, 54)
+NEST_COLOR = (200, 150, 90)
+FOOD_COLORS = ((90, 130, 100), (140, 235, 150))  # not found yet, found
+FOOD_SIZE = 4.0  # half side of a food square, canvas px at view scale 1
 
 
 def _lerp(stops: tuple[tuple[int, int, int], ...], t: float) -> tuple[int, int, int]:
@@ -199,9 +209,12 @@ class DataRenderer:
             rect, k, project = self._camera_frame(canvas)
         dt = self._data_step()
         canvas.set_clip(rect)
+        if self.camera is not None:  # map view: the maze is part of the grid surface
+            self._draw_maze(canvas, project)
         if self.exposure:
             self._update_exposure(canvas, project, dt)
             canvas.blit(self._exposure_surface, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
+        self._draw_places(canvas, project, k)
         self._draw_agents(canvas, project, k, dt)
         self._draw_flashes(canvas, project, k)
         if attractor is not None:
@@ -223,7 +236,7 @@ class DataRenderer:
                      lines=self.source.hud_lines(controls, descriptors))
         extra = ""
         if self.camera is not None:
-            extra = f" + {VIDEO_CREDIT if self.video is not None else self.camera.credit}"
+            extra = f" + {self.camera.video_credit if self.video is not None else self.camera.credit}"
         draw_caption(canvas, self._small, self.source.caption(extra), rect)
         self._draw_layer_status(canvas, rect)
 
@@ -379,6 +392,34 @@ class DataRenderer:
             y = min(q[1] for q in points) - radius
             canvas.blit(text, (x, y))
 
+    def _draw_maze(self, surface: pygame.Surface, project: Projector) -> None:
+        for a, b in self.source.maze_world:
+            pa, pb = project(*a), project(*b)
+            if pa is not None and pb is not None:
+                pygame.draw.line(surface, MAZE_COLOR, pa, pb)
+
+    def _draw_places(self, canvas: pygame.Surface, project: Projector, k: float) -> None:
+        """Scene config: the nest ring and the food items (filled once discovered)."""
+        source = self.source
+        if source.nest_world is not None:
+            x, y, r = source.nest_world
+            centre = project(x, y)
+            if centre is not None:
+                edge = project(x + r, y)
+                radius = max(6.0, math.dist(centre, edge)) if edge is not None else 6.0
+                pygame.draw.circle(canvas, NEST_COLOR, centre, radius, max(1, round(1.5 * k)))
+                text = self._small.render("nest", True, NEST_COLOR)
+                canvas.blit(text, (centre[0] - text.get_width() / 2, centre[1] + radius + 3))
+        half = max(2.0, FOOD_SIZE * k)
+        for x, y, item in source.food_world:
+            q = project(x, y)
+            if q is None:
+                continue
+            found = source.food_found(item)
+            rect = pygame.Rect(0, 0, round(2 * half), round(2 * half))
+            rect.center = (round(q[0]), round(q[1]))
+            pygame.draw.rect(canvas, FOOD_COLORS[found], rect, 0 if found else 1)
+
     def _camera_frame(self, canvas: pygame.Surface) -> tuple[pygame.Rect, float, Projector]:
         """Draw the dimmed reference frame fitted into the canvas; returns its rect, scale and projector."""
         camera = self.camera
@@ -446,19 +487,22 @@ class DataRenderer:
         grid = pygame.Surface(view.rect.size).convert()
         grid.fill(DATA_BACKGROUND)
         ww, wh = view.world_size
-        xs = [tr.to_data(0, 0)[0], tr.to_data(ww, 0)[0]]
-        ys = [tr.to_data(0, 0)[1], tr.to_data(0, wh)[1]]
+        step = self.source.grid_step or GRID_MINOR_STEP
+        xs = [tr.to_data(0, 0)[0] / step, tr.to_data(ww, 0)[0] / step]
+        ys = [tr.to_data(0, 0)[1] / step, tr.to_data(0, wh)[1] / step]
         s = view.scale
         for major in (False, True):  # majors on top
             color = GRID_MAJOR if major else GRID_MINOR
             for k in range(math.floor(min(xs)), math.ceil(max(xs)) + 1):
                 if (k % GRID_MAJOR_EVERY == 0) == major:
-                    wx = tr.apply(k * GRID_MINOR_STEP, 0.0)[0] * s
+                    wx = tr.apply(k * step, 0.0)[0] * s
                     pygame.draw.line(grid, color, (wx, 0), (wx, grid.get_height()))
             for k in range(math.floor(min(ys)), math.ceil(max(ys)) + 1):
                 if (k % GRID_MAJOR_EVERY == 0) == major:
-                    wy = tr.apply(tr.origin_x, k * GRID_MINOR_STEP)[1] * s
+                    wy = tr.apply(tr.origin_x, k * step)[1] * s
                     pygame.draw.line(grid, color, (0, wy), (grid.get_width(), wy))
+        if self.source.maze_world:  # scene config: the maze under everything else
+            self._draw_maze(grid, lambda x, y: (x * s, y * s))
         self._grid, self._grid_key = grid, key
         return grid
 
@@ -473,8 +517,12 @@ class DataRenderer:
             pygame.draw.line(canvas, TEXT_DIM, (right - bar, y), (right, y), 2)
             for x in (right - bar, right):
                 pygame.draw.line(canvas, TEXT_DIM, (x, y - 4), (x, y + 4), 2)
-            label = self._small.render(f"{length:g} {unit}", True, TEXT_DIM)
-            canvas.blit(label, (right - bar / 2 - label.get_width() / 2, y - label.get_height() - 5))
+            text = f"{length:g} {unit}"
+            if self.source.body_length:  # scene config: also in body lengths (BL)
+                text += f" ({length / self.source.body_length:.3g} BL)"
+            label = self._small.render(text, True, TEXT_DIM)
+            x = min(right - bar / 2 - label.get_width() / 2, rect.right - 4 - label.get_width())
+            canvas.blit(label, (x, y - label.get_height() - 5))
         # speed legend: ramp 0 .. p95, above the scale bar
         ref = self.source.speed_reference()
         width, top = 120, y - 46

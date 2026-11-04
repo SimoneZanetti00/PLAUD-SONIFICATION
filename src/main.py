@@ -41,10 +41,11 @@ from aquarium_boids.midi_in import MidiControllerInput
 from aquarium_boids.osc_io import OscSender
 from aquarium_boids.render import ClassicRenderer, Display, ThermalRenderer
 from aquarium_boids.render_data import CAMERA_DIM, DataRenderer
-from aquarium_boids.replay.camera import ENV_DIR as CAMERA_ENV_DIR, find_camera, find_video
+from aquarium_boids.replay.camera import ENV_DIR as CAMERA_ENV_DIR, find_camera, find_video, pixel_camera
 from aquarium_boids.replay.events import EventParams
 from aquarium_boids.replay.mapping import ENV_TERRAIN, PROFILES, Terrain
 from aquarium_boids.replay.loader import FORMATS as REPLAY_FORMATS
+from aquarium_boids.replay.scene_config import SceneConfig, load_scene_config
 from aquarium_boids.sources import ReplaySource, SimulationSource
 
 
@@ -166,7 +167,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--replay-view", choices=("map", "camera", "video"), default="map",
         help="data look: map (default, metric grid), camera (the scene's OpenTraj reference frame, dimmed, "
         "with the people projected into it) or video (the original video behind them, frame = 25 x data "
-        "time; needs OpenCV, see requirements-video.txt); camera and video: zara1 and hotel only",
+        "time; needs OpenCV, see requirements-video.txt); camera and video: zara1 and hotel, or any data in "
+        "image pixels with --replay-image / --replay-video",
+    )
+    replay.add_argument(
+        "--replay-image", metavar="FILE",
+        help="camera view for data in this image's pixel coordinates (no homography), e.g. an ANTS frame",
+    )
+    replay.add_argument(
+        "--replay-video", metavar="FILE",
+        help="video view for data in this video's pixel coordinates (frame = fps x data time); needs an image "
+        "too (--replay-image or the scene config's)",
+    )
+    replay.add_argument(
+        "--replay-config", metavar="FILE",
+        help="scene config (.json) for data that is not ETH/UCY pedestrians: name, citation, units, body "
+        "length, places (nest, food, maze), image / video; see docs/ANTS.md",
     )
     replay.add_argument(
         "--replay-camera-dir", metavar="DIR",
@@ -225,6 +241,13 @@ def positive_int(text: str) -> int:
 
 def load_replay(args: argparse.Namespace) -> ReplaySource:
     """Load --replay before any window opens; a bad file exits with its message."""
+    config = None
+    if args.replay_config:
+        try:
+            config = load_scene_config(args.replay_config)
+        except (OSError, ValueError) as exc:
+            sys.exit(f"--replay-config: {exc}")
+        print(f"[replay] scene config {args.replay_config}")
     try:
         source = ReplaySource(
             args.replay,
@@ -239,6 +262,7 @@ def load_replay(args: argparse.Namespace) -> ReplaySource:
             event_params=EventParams(on=args.replay_event_z, refractory=args.replay_event_refractory),
             profile=args.replay_profile,
             terrain=load_terrain(args) if args.replay_profile == "scene" else None,
+            config=config,
         )
     except (OSError, ValueError) as exc:
         sys.exit(f"--replay: {exc}")
@@ -261,7 +285,7 @@ def load_terrain(args: argparse.Namespace) -> Terrain | None:
     return terrain
 
 
-def replay_camera(args: argparse.Namespace):
+def replay_camera(args: argparse.Namespace, replay: ReplaySource | None = None):
     """--replay-view camera / video -> (camera, video); anything missing falls back with the reason:
     video -> camera view -> map view (None, None)."""
     if args.replay_view == "map":
@@ -269,14 +293,27 @@ def replay_camera(args: argparse.Namespace):
     if args.classic or args.replay_look != "data":
         print(f"[replay] {args.replay_view} view needs the data look; using the map view")
         return None, None
-    camera, why = find_camera(args.replay, args.replay_camera_dir)
+    config: SceneConfig | None = replay.config if replay is not None else None
+    image = getattr(args, "replay_image", None) or (config.image if config is not None else None)
+    video_file = getattr(args, "replay_video", None) or (config.video if config is not None else None)
+    pixels = image is not None or video_file is not None  # data in image pixels, no homography
+    if pixels:
+        camera, why = pixel_camera(image, config.image_credit if config else None,
+                                   config.video_credit if config else None)
+    else:
+        camera, why = find_camera(args.replay, args.replay_camera_dir)
     if camera is None:
         print(f"[replay] {args.replay_view} view not available: {why}; using the map view")
         return None, None
     if args.replay_view == "video":
         from aquarium_boids.replay.video import VideoFrames  # cv2 is imported only inside
 
-        path, why = find_video(args.replay, args.replay_camera_dir)
+        if pixels:
+            path, why = (Path(video_file), "") if video_file is not None else (None, "no --replay-video FILE")
+            if path is not None and not path.is_file():
+                path, why = None, f"missing {path}"
+        else:
+            path, why = find_video(args.replay, args.replay_camera_dir)
         if path is not None:
             try:
                 video = VideoFrames(path, dim=CAMERA_DIM)
@@ -320,7 +357,7 @@ def main(argv: list[str] | None = None) -> None:
     display = Display((WIDTH, HEIGHT), args.size, title, fullscreen=args.fullscreen)
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 16)
-    camera, video = replay_camera(args) if replay is not None else (None, None)
+    camera, video = replay_camera(args, replay) if replay is not None else (None, None)
     if camera is not None and replay.mapping is not None:  # profile scene: pan follows the video, not the map
         replay.set_pan_camera(camera, pygame.image.load(str(camera.image_path)).get_size())
     # Replay only: people instead of fish, a caption with the scene and the data time, replay HUD text.

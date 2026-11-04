@@ -154,6 +154,9 @@ All the [general options](CONTROLS.md#command-line) still apply (`--classic`, `-
 | `--replay-look data\|thermal` | `data` | the data look (below), or people drawn in the thermal look |
 | `--replay-view map\|camera\|video` | `map` | data look only: metric map, OpenTraj reference frame, or the original video |
 | `--replay-camera-dir DIR` | `$PLAUD_OPENTRAJ_DIR` | the folder with `zara01/` and `seq_hotel/` from OpenTraj |
+| `--replay-image FILE` | off | camera view for data in this image's pixels (no homography), e.g. ants ([ANTS.md](ANTS.md#views)) |
+| `--replay-video FILE` | off | video view for data in this video's pixels (frame = fps × data time); needs an image too |
+| `--replay-config FILE` | off | scene config (.json) for data that is not ETH/UCY pedestrians: units, body length, nest, food, maze, image and video ([ANTS.md](ANTS.md#the-scene-config)) |
 | `--replay-normalise` | off | map every descriptor to this file's p5–p95 range |
 | `--replay-no-events` | off | no acceleration events |
 | `--replay-profile synthfish\|scene` | `synthfish` | sound mapping: the simulation's, or one that follows the scene ([Sound profiles](#sound-profiles)) |
@@ -175,6 +178,9 @@ python src/main.py --replay <DATA>/eth_ucy/zara1/crowds_zara01.txt --replay-view
 
 # your own CSV at 10 rows per second
 python src/main.py --replay walk.csv --replay-fps 10
+
+# ants (see ANTS.md): a 3-hour foraging trial at 20x, with its scene config
+python src/main.py --replay <DATA>/ants/converted/liquid_brains/Food_Exp_1.csv --replay-config <DATA>/ants/converted/liquid_brains/Food_Exp_1.scene.json --replay-speed 20
 ```
 
 Keys in replay mode are listed in [CONTROLS.md](CONTROLS.md#replay-mode).

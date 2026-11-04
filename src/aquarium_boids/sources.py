@@ -20,6 +20,7 @@ from .replay.events import EventDetector, EventParams
 from .replay.interp import DataClock, Piece, Trajectories, per_frame
 from .replay.mapping import Person, SceneMapping, Terrain, count_range
 from .replay.loader import data_bounds, fit_to_world, load_trajectories, resolve_format, to_world
+from .replay.scene_config import FoodItem, SceneConfig
 
 REPLAY_MARGIN = 60.0  # world px kept free around the data (same as the joystick margin)
 # Profile scene: a person is "clearly visible" (events allowed) only away from the picture's edge.
@@ -177,6 +178,10 @@ class ReplaySource:
       take_pad_samples() and take_kicks(). The count is relative to the file's p5..p95 of people on
       screen (sampled every 0.1 s, like the speed calibration).
       The default "synthfish" keeps the standard mapping (and its OSC output) unchanged.
+    - Scene config (config=..., --replay-config; replay/scene_config.py): name, citation, units,
+      body length, flip, grid step and places (nest, food items, maze edges) of a dataset that is
+      not ETH/UCY pedestrians. Display only for now: the sound is the same as without it.
+      Without a config everything above is unchanged.
     """
 
     def __init__(
@@ -194,10 +199,12 @@ class ReplaySource:
         world: tuple[float, float] = (WIDTH, HEIGHT),
         profile: str = "synthfish",
         terrain: Terrain | None = None,
+        config: SceneConfig | None = None,
     ) -> None:
         if max_agents < 1:
             raise ValueError(f"max agents must be >= 1, got {max_agents}")
         dataset = load_trajectories(path, fmt=fmt, fps=fps)
+        flip_y = flip_y or (config is not None and config.flip_y)
         transform = fit_to_world(data_bounds(dataset), world, REPLAY_MARGIN, flip_y=flip_y)
         self.trajectories = Trajectories(to_world(dataset, transform))
         self.clock = DataClock(self.trajectories.t_start, self.trajectories.t_end, speed=speed, loop=loop)
@@ -207,7 +214,21 @@ class ReplaySource:
         self.scene, self.source_label = scene_name(path, fmt)
         self.citation, self.reference = scene_citation(path, fmt)
         self.unit = "m" if resolve_format(path, fmt) == "eth-ucy" else "unit"
+        self.config = config
+        self.noun = "people"  # HUD: who is on screen
+        self.body_length: float | None = None  # data units, from a scene config
+        self.grid_step: float | None = None  # map grid step in data units (None: the renderer's 1 unit)
+        if config is not None:
+            self.scene = config.name or self.scene
+            self.citation = config.citation or self.citation
+            self.reference = config.reference or self.reference
+            self.title = f"PLAUD-SONIFICATION - {self.scene} - real trajectories ({self.citation})"
+            self.unit = config.units
+            self.noun = config.agents
+            self.body_length = config.body_length
+            self.grid_step = config.grid_step
         self.transform = transform  # data units <-> world px, for the metric grid of the data look
+        self._places_world(config)
         self.loop = loop
         self.max_population = dataset.max_population
         self.calibration = calibrate_speed_force(self.trajectories, speed, max_agents)
@@ -253,6 +274,23 @@ class ReplaySource:
             + ("" if profile == "synthfish" else (" (terrain map)" if terrain else " (plain axes, no terrain)"))
         )
         self._sync(self.clock.t)
+
+    def _places_world(self, config: SceneConfig | None) -> None:
+        """Scene config places in world px: nest (x, y, r), food items, maze segments (display)."""
+        tr = self.transform
+        self.nest_world: tuple[float, float, float] | None = None
+        self.food_world: list[tuple[float, float, FoodItem]] = []
+        self.maze_world: list[tuple[tuple[float, float], tuple[float, float]]] = []
+        if config is None:
+            return
+        if config.nest is not None:
+            self.nest_world = (*tr.apply(config.nest.x, config.nest.y), config.nest.r * tr.scale)
+        self.food_world = [(*tr.apply(f.x, f.y), f) for f in config.food]
+        self.maze_world = [(tr.apply(x1, y1), tr.apply(x2, y2)) for x1, y1, x2, y2 in config.maze_edges]
+
+    def food_found(self, item: FoodItem) -> bool:
+        """A food item has been discovered by this data time."""
+        return item.t is not None and self.clock.t >= item.t
 
     def reset(self, population: int) -> None:
         """R key: restart the file (population is ignored)."""
@@ -453,15 +491,31 @@ class ReplaySource:
             f"PLAUD-SONIFICATION | {self.scene} | real trajectories ({self.citation}) -> OSC -> Max",
             f"data time {mmss(self.clock.t - self.clock.start)} / {mmss(self.clock.end - self.clock.start)} | "
             f"{state} | speed x{self.speed:g} | loop {'on' if self.loop else 'off'} | SPACE pause | R restart",
-            f"people on screen {len(self.agents)} (most at once in the file {self.max_population}) | "
+            f"{self.noun} on screen {len(self.agents)} (most at once in the file {self.max_population}) | "
             f"fish_count {d('fish_count', 0):.2f}{' (normalised)' if self.normaliser is not None else ''}",
             f"source: {self.reference}",
             f"{self.event_status()} | predator_amount {controls.predator_amount:.2f} (UDP) | no force on the data",
+            *self._config_hud(),
             *self._profile_hud(),
             f"OSC out: {OSC_HOST}:{OSC_PORT} | plain out: {PLAIN_UDP_PORT} | control in: {CONTROL_PORT}",
             f"mean_speed {d('mean_speed', 0):.2f} | energy {d('energy', 0):.2f} | density {d('density', 0):.2f} | "
             f"spread {d('spread', 0):.2f} | coherence {d('direction_coherence', 0):.2f}",
         ]
+
+    def _config_hud(self) -> list[str]:
+        """Scene config: one line with the body length and the places (none without a config)."""
+        c = self.config
+        if c is None:
+            return []
+        parts = [f"scene config {c.path.name}"]
+        if c.body_length:
+            parts.append(f"body length {c.body_length:g} {c.units}{' (estimate)' if c.body_length_is_estimate else ''}")
+        if c.nest is not None:
+            parts.append("nest")
+        if c.food:
+            found = sum(1 for f in c.food if self.food_found(f))
+            parts.append(f"food found {found}/{len(c.food)}")
+        return [" | ".join(parts)]
 
     def _profile_hud(self) -> list[str]:
         m = self.mapping

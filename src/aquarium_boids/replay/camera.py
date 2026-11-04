@@ -13,6 +13,8 @@ zara01 also needs an image-space correction (mirror left-right, x1.2 about the f
 Found by syncing the data with OpenTraj's video.avi at the same frame number (people under the
 dots: motion hit rate 0.29 -> 0.86 at offset 0, as good as hotel's 0.85 without correction); the
 still reference frame alone could not tell left from right.
+Any other dataset whose x, y are already pixels of an image (e.g. ANTS) uses Camera.pixels: no
+homography, the image from --replay-image (or a scene config), the video from --replay-video.
 Pure Python, no pygame, no numpy.
 """
 from __future__ import annotations
@@ -65,12 +67,23 @@ def read_homography(path: str | Path) -> Matrix:
     return (tuple(values[0:3]), tuple(values[3:6]), tuple(values[6:9]))  # type: ignore[return-value]
 
 
+IDENTITY: Matrix = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+
+
 @dataclass(frozen=True)
 class Camera:
     """World metres -> pixel (col, row) of one reference frame."""
     image_path: Path
     to_image: Matrix  # world (x, y, 1) -> image (col, row, 1), homogeneous
     credit: str = CREDIT
+    video_credit: str = VIDEO_CREDIT
+
+    @classmethod
+    def pixels(cls, image_path: str | Path, credit: str | None = None,
+               video_credit: str | None = None) -> "Camera":
+        """Data already in this image's pixel coordinates (x = column, y = row): no homography."""
+        name = Path(image_path).name
+        return cls(Path(image_path), IDENTITY, credit or f"frame {name}", video_credit or "video")
 
     @classmethod
     def from_homography(cls, image_path: str | Path, h_image_to_world: Matrix,
@@ -98,6 +111,16 @@ def find_video(replay_path: str | Path, directory: str | Path | None) -> tuple[P
         return None, "no camera for this scene"
     video = Path(directory) / SCENE_CAMERAS[stem][0] / VIDEO_NAME
     return (video, "") if video.is_file() else (None, f"missing {video}")
+
+
+def pixel_camera(image: str | Path | None, credit: str | None = None,
+                 video_credit: str | None = None) -> tuple[Camera | None, str]:
+    """--replay-image (or a scene config's image): a camera for data in that image's pixels, or (None, why)."""
+    if image is None:
+        return None, "no image: pass --replay-image FILE (a frame in the data's pixel coordinates)"
+    if not Path(image).is_file():
+        return None, f"missing {image}"
+    return Camera.pixels(image, credit, video_credit), ""
 
 
 def find_camera(replay_path: str | Path, directory: str | Path | None) -> tuple[Camera | None, str]:

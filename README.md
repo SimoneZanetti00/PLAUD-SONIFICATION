@@ -188,10 +188,11 @@ src/
   aquarium_boids/       simulation and replay sources, descriptors, OSC, MIDI, rendering
     replay/             trajectory loader, interpolation, calibration, events, camera, video
   tools/                send_control_test.py (test controls on UDP 7500)
+tools/                  convert_ants.py (ant datasets -> replay CSV, places, scene config)
 max/
   shoal_fx.maxpat       predator / event kick + spectral shake + reverb
   shoal_gran.maxpat     per-person granulator, slice player, source menu
-docs/                   SYSTEM, REPLAY, ARCHITECTURE, OSC, CONTROLS, MAX_SETUP, MAX_PATCH_CHANGES, ROADMAP, IDEAS; img/
+docs/                   SYSTEM, REPLAY, ANTS, ARCHITECTURE, OSC, CONTROLS, MAX_SETUP, MAX_PATCH_CHANGES, ROADMAP, IDEAS; img/
 tests/                  offline tests: python -m unittest discover -s tests
 ```
 
@@ -201,6 +202,7 @@ tests/                  offline tests: python -m unittest discover -s tests
 |---|---|
 | [docs/SYSTEM.md](docs/SYSTEM.md) | how the whole system works: pipeline, scene quantities, both sound profiles as mapping tables, the terrain map, events, the Max patches, limits |
 | [docs/REPLAY.md](docs/REPLAY.md) | data sources and citations, getting the files, every replay option, views, calibration, events, known limits |
+| [docs/ANTS.md](docs/ANTS.md) | experimental: ant datasets (ANTS, Liquid Brains), converters, the scene config, maze / nest / food and pixel image / video views |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | modules, the frame loop, simulation vs replay source, descriptors, how they reach the sound |
 | [docs/OSC.md](docs/OSC.md) | every OSC address with its range, replay-mode differences, the control input on UDP 7500 |
 | [docs/CONTROLS.md](docs/CONTROLS.md) | keyboard, mouse, command line, replay mode, MPK mini 3, MIDIMIX |

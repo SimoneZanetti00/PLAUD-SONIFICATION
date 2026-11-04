@@ -16,11 +16,13 @@
 from __future__ import annotations
 
 import bisect
+import math
 from dataclasses import dataclass
 
 from .loader import Dataset, Sample
 
 SIM_FPS = 60.0
+ACTIVE_BUCKETS = 2000  # time buckets over the data for Trajectories.active
 
 
 @dataclass(frozen=True)
@@ -138,14 +140,27 @@ class Trajectories:
             raise ValueError("no id has two consecutive rows: nothing to replay")
         pieces.sort(key=lambda p: p.t0)  # stable: same start keeps dataset order
         self.pieces = pieces
-        self._starts = [p.t0 for p in pieces]
         self.t_start = pieces[0].t0
         self.t_end = max(p.t1 for p in pieces)
+        # Time buckets: bucket b lists (in piece order) the pieces whose [t0, t1] reaches into it, so
+        # active() looks at a few pieces instead of every piece started so far (hours of ant data).
+        span = self.t_end - self.t_start
+        self._bucket_s = span / ACTIVE_BUCKETS if span > 0 else 1.0
+        self._buckets: list[list[int]] = [[] for _ in range(self._bucket(self.t_end) + 1)]
+        for i, p in enumerate(pieces):
+            for b in range(self._bucket(p.t0), self._bucket(p.t1) + 1):
+                self._buckets[b].append(i)
+
+    def _bucket(self, t: float) -> int:
+        return math.floor((t - self.t_start) / self._bucket_s)
 
     def active(self, t: float) -> list[Piece]:
-        """Pieces present at time t, ordered by start time (then dataset order)."""
-        n = bisect.bisect_right(self._starts, t)
-        return [p for p in self.pieces[:n] if t <= p.t1]
+        """Pieces present at time t (t0 <= t <= t1), ordered by start time (then dataset order)."""
+        b = self._bucket(t)
+        if not 0 <= b < len(self._buckets):
+            return []
+        pieces = self.pieces
+        return [pieces[i] for i in self._buckets[b] if pieces[i].t0 <= t <= pieces[i].t1]
 
 
 def per_frame(state: State, speed: float = 1.0, fps: float = SIM_FPS) -> State:
