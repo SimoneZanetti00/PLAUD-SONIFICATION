@@ -10,7 +10,8 @@ Read here:
 - flip_y (data y points up), grid (minor grid step in data units, map view);
 - smooth_s: a centred moving average of the positions over this many seconds before the spline
   (dense, jittery tracking such as ANTS box centres); path_s: seconds of path drawn behind each one;
-- thresholds in body lengths: standing (BL/s), speed range (BL/s), closeness range (BL);
+- thresholds in body lengths: standing (BL/s), speed range (BL/s), closeness range (BL), and the
+  centre distance of an encounter (BL);
 - places: the nest (x, y, r) and food items (x, y, patch, discovery time t in data seconds), and
   maze edges to draw, from an optional places_file (written by tools/convert_ants.py) and/or the
   config's own "places" (its nest keys, e.g. only r, win over the file's; its food list replaces it);
@@ -28,7 +29,7 @@ from pathlib import Path
 
 EVENTS = ("arrivals", "together", "food_discovery", "recruitment", "encounters")
 ARRIVALS = ("anywhere", "nest", "off")
-DEFAULT_THRESHOLDS = {"standing_bl_s": 0.3, "speed_bl_s": (0.5, 5.0), "close_bl": (0.5, 3.0)}
+DEFAULT_THRESHOLDS = {"standing_bl_s": 1.0, "speed_bl_s": (1.0, 4.0), "close_bl": (0.5, 3.0), "encounter_bl": 1.0}
 DEFAULT_NEST_RADIUS_BL = 10.0  # nest radius when none is given, in body lengths
 DEFAULT_GRID_BL = 10.0  # map grid step when none is given, in body lengths
 KEYS = {"name", "citation", "reference", "agents", "units", "body_length", "body_length_is_estimate",
@@ -68,6 +69,7 @@ class SceneConfig:
     standing_bl_s: float = DEFAULT_THRESHOLDS["standing_bl_s"]
     speed_bl_s: tuple[float, float] = DEFAULT_THRESHOLDS["speed_bl_s"]
     close_bl: tuple[float, float] = DEFAULT_THRESHOLDS["close_bl"]
+    encounter_bl: float = DEFAULT_THRESHOLDS["encounter_bl"]
     nest: Nest | None = None
     food: tuple[FoodItem, ...] = ()
     maze_edges: tuple[tuple[float, float, float, float], ...] = ()
@@ -188,8 +190,9 @@ def load_scene_config(path: str | Path) -> SceneConfig:
     bad = sorted(set(th) - set(DEFAULT_THRESHOLDS))
     if bad:
         raise ValueError(f"thresholds: unknown key(s) {', '.join(bad)} (known: {', '.join(DEFAULT_THRESHOLDS)})")
-    if "standing_bl_s" in th:
-        kw["standing_bl_s"] = _number(th["standing_bl_s"], "thresholds.standing_bl_s", positive=True)
+    for key in ("standing_bl_s", "encounter_bl"):
+        if key in th:
+            kw[key] = _number(th[key], f"thresholds.{key}", positive=True)
     for key in ("speed_bl_s", "close_bl"):
         if key in th:
             kw[key] = _pair(th[key], f"thresholds.{key}")

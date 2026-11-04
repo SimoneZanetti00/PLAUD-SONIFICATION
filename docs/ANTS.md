@@ -4,11 +4,11 @@ Experimental (branch `ants`). Two ant tracking datasets can be replayed with the
 the pedestrians: a converter turns them into the replay CSV, and a **scene config** tells the
 replay what the data is (units, body length, nest, food, maze, image and video).
 
-Status: step 1, the base. Data, converters, scene config and views are in place. The sound is
-still the pedestrian one (`synthfish` or `scene` profile, unchanged): the ant events and mapping
-(food discovery, recruitment wave, activity, distance from the nest, encounter density, arrivals
-at the nest) are the next step. Without `--replay-config` nothing changes for the pedestrian
-scenes.
+Status: data, converters, scene config, views and the ant sound mapping are in place. With
+`--replay-profile scene` and an ant config, the sound follows the colony ([Sound](#sound)): food
+discovery, recruitment waves, activity, distance from the nest, encounter density, arrivals at
+the nest. With the `synthfish` profile the sound is the simulation's, as for the pedestrians.
+Without `--replay-config` nothing changes for the pedestrian scenes.
 
 ## Contents
 
@@ -17,6 +17,7 @@ scenes.
 - [Converting](#converting)
 - [The scene config](#the-scene-config)
 - [Views](#views)
+- [Sound](#sound)
 - [Known limits](#known-limits)
 
 ## The datasets
@@ -88,9 +89,9 @@ written by the converter:
   "comment": "Aphaenogaster senilis in a Y-maze; body length 6 mm is an estimate; y flipped so the nest is at the bottom as in the paper",
   "flip_y": true,
   "grid": 50,
-  "thresholds": {"standing_bl_s": 0.3, "speed_bl_s": [0.5, 5.0], "close_bl": [0.5, 3.0]},
+  "thresholds": {"standing_bl_s": 1.0, "speed_bl_s": [1.0, 4.0], "close_bl": [0.5, 3.0], "encounter_bl": 1.0},
   "places_file": "Food_Exp_1.places.json",
-  "places": {"nest": {"r": 60}},
+  "places": {"nest": {"r": 130}},
   "events": {"arrivals": "nest", "together": false, "food_discovery": true, "recruitment": true, "encounters": true}
 }
 ```
@@ -105,11 +106,11 @@ written by the converter:
 | `grid` | map grid step in data units (default 10 BL; without a body length, 1 unit) | yes |
 | `smooth_s` | centred moving average of the positions over this many seconds, before the spline, within runs of consecutive frames (ANTS: 0.2 s, 7 frames at 30 fps) | yes |
 | `path_s` | seconds of path drawn behind each one (default 10; ANTS: 2) | yes |
-| `thresholds` | in body lengths: `standing_bl_s` (slower = standing), `speed_bl_s` (low, high), `close_bl` (near, far) | read and checked; used by the ant mapping (next step) |
+| `thresholds` | in body lengths: `standing_bl_s` (slower = standing or lingering, default 1), `speed_bl_s` (the moving ones' speed range, default 1–4), `close_bl` (near, far: closeness 1 .. 0), `encounter_bl` (centre distance of an encounter, default 1) | sound |
 | `places_file` | a places file (below) | yes |
 | `places.nest` | `x`, `y`, `r` (data units); its keys win over the places file's (e.g. only `r`); default r = 10 BL | drawn |
 | `places.food` | a list of `{x, y, patch, t}`; replaces the places file's food | drawn |
-| `events` | which events apply: `arrivals` (`anywhere`, `nest` or `off`), `together`, `food_discovery`, `recruitment`, `encounters` (true / false) | read and checked; used next step |
+| `events` | which events apply: `arrivals` (`anywhere`, `nest` or `off`), `food_discovery`, `recruitment`, `encounters` (true / false); `together` is not used for ants | sound |
 | `image`, `video` | a frame and a video in the data's pixel coordinates (camera / video views); `--replay-image`, `--replay-video` override them | yes |
 | `image_credit`, `video_credit` | credit shown in the caption in those views | yes |
 | `comment` | free text, ignored | |
@@ -131,11 +132,14 @@ outdoor sequences have a nest entrance in the picture: its place is not in the d
 hand (e.g. `"places": {"nest": {"x": 720, "y": 300, "r": 128}}` for Seq0009, placed by eye on
 frame 1).
 
+For Liquid Brains the nest radius is 130 mm around node 634: the tracked arena starts above the
+nest, and the ants first appear 80–120 mm from that node.
+
 ## Views
 
 ```
-# Liquid Brains, 20x: the maze, the nest, the food items (filled once found)
-python src/main.py --replay <DATA>/ants/converted/liquid_brains/Food_Exp_1.csv --replay-config <DATA>/ants/converted/liquid_brains/Food_Exp_1.scene.json --replay-speed 20
+# Liquid Brains, 15x: the maze, the nest, the food items (filled once found), with the ant sound mapping
+python src/main.py --replay <DATA>/ants/converted/liquid_brains/Food_Exp_1.csv --replay-config <DATA>/ants/converted/liquid_brains/Food_Exp_1.scene.json --replay-speed 15 --replay-profile scene --replay-terrain <TERRAIN>
 
 # ANTS outdoor over its video (video environment), looping
 python src/main.py --replay <DATA>/ants/converted/ants/Seq0009Object50Image64.csv --replay-config <DATA>/ants/converted/ants/Seq0009Object50Image64.scene.json --replay-view video --replay-loop
@@ -153,7 +157,54 @@ python src/main.py --replay <FILE>.csv --replay-view video --replay-image <FRAME
 - **Video** (`--replay-view video`): the video from `--replay-video` (or the config's `video`),
   frame = fps × data time, so frame 0 is the first jpg. It needs an image too (the camera view is
   the fallback). The `V` key (normal, dark, off) works as for the pedestrians.
-- The sound profiles, events and keys are those of the pedestrian replay ([REPLAY.md](REPLAY.md)).
+- Keys are those of the pedestrian replay ([REPLAY.md](REPLAY.md)). The flashes of the ant
+  profile (food found on its item, recruitment wave on the nest, arrivals on the ant) last 1.2 s of
+  playback time, whatever `--replay-speed`.
+
+## Sound
+
+`--replay-profile scene` with an ant config uses the ant mapping
+([replay/ant_mapping.py](../src/aquarium_boids/replay/ant_mapping.py)) instead of the pedestrian
+one. It sends the same OSC addresses, so the Max side is the same. At load it measures the file
+with the same scene checks (every 0.1–0.5 s of data): the count range (p5–p95), the mean distance
+from the nest (p5–p95), the nest outflow (p90) and the encounter rate (p95).
+
+| Scene quantity | How | Sound |
+|---|---|---|
+| Count | ants on screen, log curve over the file's p5–p95 | `/plaud/loudness`, `/plaud/limit` (more ants, more partials), onset target, presence `/mix/master` |
+| Activity | share of ants faster than `standing_bl_s`; mean speed of those, over `speed_bl_s` | share → rhythmicity target; speed → `/plaud/centroid` |
+| Distance from the nest | mean distance of the ants from the nest, over the file's p5–p95 | texture target: near = 0 (full, soft), far = 1 (sparse, percussive, bright) |
+| Recruitment wave | nest outflow: track pieces starting inside the nest radius, per minute over the last 2 min of data; above the file's p90, **only after the first food discovery** (full at 1.5 × p90) | PLAUD swells: onset target + 0.5 × wave, loudness + 0.35 × wave; a flash on the nest when a wave starts |
+| Encounters | two centres closer than `encounter_bl`, counted again only after 2 × that apart; per minute over the last 30 s of data, over the file's p95 | `/gran/density` (0–60, glided over 2 s): a density, not one event each |
+| Food discovery | the places file's discovery times | a slice (`/pad/sample` 1–4 by where the item is), a flash on the item; the first item of each patch also a kick (no PLAUD shake). None is dropped |
+| Arrivals | a new track piece starting inside the nest radius (`arrivals: "nest"`) | a slice by where the ant is, at most one per 8 s of playback |
+| Closeness | mean nearest-neighbour distance over `close_bl` | `/plaud/stretch`, `/plaud/limit`, as for people |
+| Agitation | as for people | `/plaud/temp` (L2) |
+
+The territory is picked from the three targets (onset, rhythmicity, texture) on the PLAUD terrain
+map, as for people ([SYSTEM.md](SYSTEM.md)). Measurements use windows in data time; the glides
+(territory 4 s, loudness 1.5 s, wave 3 s, grains 2 s) and the spacing of slices are in playback
+time, so a 3-hour trial at 15× moves at a listenable pace.
+
+**Food_Exp_1 against NoFood_Exp_1 at 15×** (about 11.5 minutes each):
+
+| | Food_Exp_1 | NoFood_Exp_1 |
+|---|---|---|
+| Ants on screen (p5 / p50 / p95 of the minute means) | 1.5 / 8.3 / 21.5 | 1.8 / 5.3 / 11.2 |
+| Food discoveries | 12 (data minutes 11–37 from the start of the file), 2 kicks | none |
+| Recruitment waves | 4 (data minutes 27, 38, 48, 57), wave up to 0.86 | none (no discovery) |
+| Arrival slices from the nest | 69 of 642 (6 per playback minute) | 76 of 1087 (7 per playback minute) |
+| Encounters | 409 (peak 10 per data minute, at minutes 50–70) | 209 (peak 4 per minute, at 30–50) |
+| Share moving | 0.66–0.87 (ants linger at the food) | 0.77–0.90 |
+| Mean distance from the nest | 36–114 BL (p5–p95) | 29–94 BL |
+
+The arc of Food_Exp_1: a near-silent start (a few ants near the nest, soft and full); the first
+items found at minutes 11–12 (slice, kick, flash) while the arena is still almost empty; from
+minute 25 the outflow rises and the first wave swells PLAUD as the ants spread towards the food
+(texture rises with the distance); minutes 45–70 are the peak: twenty ants, waves, the densest
+grains from the encounters on the trails and at the patches; then a long thinning to the end. The
+No-Food trial has no discoveries and no waves: a smaller, steadier swell around minutes 30–60
+that stays closer to the nest.
 
 ## Known limits
 
@@ -164,5 +215,11 @@ python src/main.py --replay <FILE>.csv --replay-view video --replay-image <FRAME
 - Some ants visible in the ANTS outdoor frames have no box, so they are not in the data.
 - Liquid Brains ids are fragmented: an ant lost and found again gets a new id (613 ids in
   Food_Exp_1, median track 14 s). Arrivals will count only tracks that start near the nest.
-- A 3-hour Liquid Brains trial takes about 10 s to load (speed calibration over the whole file).
+- A 3-hour Liquid Brains trial takes about 20–25 s to load in profile scene (the speed and the
+  ant calibrations run over the whole file; about 10 s without the profile).
+- The ranges are per file (as for people), so both trials reach full loudness and similar grain
+  densities at their own peaks: Food_Exp_1 is not louder than NoFood_Exp_1 in absolute terms; the
+  difference is in its events, waves, distance and timing.
+- In the maze the ants are far apart (tens of body lengths), so closeness and `/plaud/stretch`
+  stay at 0 there; they move in the crowded ANTS outdoor scenes.
 - The first ~10 minutes of a Liquid Brains trial are almost empty (the ants have not come out yet).

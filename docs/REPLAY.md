@@ -179,8 +179,8 @@ python src/main.py --replay <DATA>/eth_ucy/zara1/crowds_zara01.txt --replay-view
 # your own CSV at 10 rows per second
 python src/main.py --replay walk.csv --replay-fps 10
 
-# ants (see ANTS.md): a 3-hour foraging trial at 20x, with its scene config
-python src/main.py --replay <DATA>/ants/converted/liquid_brains/Food_Exp_1.csv --replay-config <DATA>/ants/converted/liquid_brains/Food_Exp_1.scene.json --replay-speed 20
+# ants (see ANTS.md): a 3-hour foraging trial at 15x, with its scene config and the ant sound mapping
+python src/main.py --replay <DATA>/ants/converted/liquid_brains/Food_Exp_1.csv --replay-config <DATA>/ants/converted/liquid_brains/Food_Exp_1.scene.json --replay-speed 15 --replay-profile scene --replay-terrain <TERRAIN>
 ```
 
 Keys in replay mode are listed in [CONTROLS.md](CONTROLS.md#replay-mode).

@@ -86,8 +86,10 @@ EXPOSURE_MIN_STEP = 3.0  # canvas px walked before a segment is laid: standing p
 EXPOSURE_MAX_STEP = 40  # canvas px: a longer jump (slot reuse, restart) draws nothing
 VIDEO_LOOKS = ("normal", "dark", "off")
 # Sound events of profile scene, flashed on the people at the moment they sound (EVENT_FLASH_S long)
-FLASH_COLORS = {"arrival": (120, 220, 255), "together": (255, 205, 110)}
-FLASH_TEXT = {"arrival": "arrival", "together": "walking together"}
+FLASH_COLORS = {"arrival": (120, 220, 255), "together": (255, 205, 110), "food": (140, 235, 150),
+                "recruitment": (255, 170, 90)}
+FLASH_TEXT = {"arrival": "arrival", "together": "walking together", "food": "food found",
+              "recruitment": "recruitment wave"}
 FLASH_RADIUS = (9.0, 30.0)  # ring radius at the start .. end of the flash, canvas px at view scale 1
 LAYER_TEXT = (120, 122, 130)
 # Scene config places
@@ -391,6 +393,17 @@ class DataRenderer:
             x = max(q[0] for q in points) + radius + 4
             y = min(q[1] for q in points) - radius
             canvas.blit(text, (x, y))
+        for kind, age, (wx, wy) in self.source.place_marks():  # ants: food found, recruitment wave
+            q = project(wx, wy)
+            if q is None:
+                continue
+            f = min(1.0, age / EVENT_FLASH_S)
+            fade = 1.0 - f
+            color = tuple(int(c * fade) for c in FLASH_COLORS[kind])
+            radius = (FLASH_RADIUS[0] + 2.0 * (FLASH_RADIUS[1] - FLASH_RADIUS[0]) * f) * k
+            pygame.draw.circle(canvas, color, q, radius, max(1, round(3.0 * k * fade + 0.5)))
+            text = self._small.render(FLASH_TEXT[kind], True, color)
+            canvas.blit(text, (q[0] + radius + 4, q[1] - radius))
 
     def _draw_maze(self, surface: pygame.Surface, project: Projector) -> None:
         for a, b in self.source.maze_world:
@@ -409,7 +422,7 @@ class DataRenderer:
                 radius = max(6.0, math.dist(centre, edge)) if edge is not None else 6.0
                 pygame.draw.circle(canvas, NEST_COLOR, centre, radius, max(1, round(1.5 * k)))
                 text = self._small.render("nest", True, NEST_COLOR)
-                canvas.blit(text, (centre[0] - text.get_width() / 2, centre[1] + radius + 3))
+                canvas.blit(text, (centre[0] - text.get_width() / 2, centre[1] - text.get_height() / 2))
         half = max(2.0, FOOD_SIZE * k)
         for x, y, item in source.food_world:
             q = project(x, y)

@@ -132,7 +132,7 @@ class LiquidConverter(unittest.TestCase):
             self.assertEqual([s.t for s in data.tracks["4"]], [310.0, 310.5, 311.0])
             config = load_scene_config(out / "Food_Exp_3.scene.json")
             self.assertEqual((config.units, config.body_length, config.flip_y), ("mm", 6.0, True))
-            self.assertEqual((config.nest.x, config.nest.y, config.nest.r), (43.3, 1015.0, 60.0))
+            self.assertEqual((config.nest.x, config.nest.y, config.nest.r), (43.3, 1015.0, 130.0))
             self.assertEqual([(f.patch, f.t) for f in config.food], [("GP1", 315.0), ("GP2", None)])
             self.assertTrue(config.maze_edges)
             self.assertTrue(config.event_on("food_discovery") and config.events["arrivals"] == "nest")
@@ -150,7 +150,7 @@ class SceneConfigFile(unittest.TestCase):
 
     def test_defaults_and_grid(self):
         c = self.load({"units": "mm", "body_length": 6})
-        self.assertEqual((c.agents, c.grid_step, c.standing_bl_s, c.speed_bl_s), ("agents", 60.0, 0.3, (0.5, 5.0)))
+        self.assertEqual((c.agents, c.grid_step, c.standing_bl_s, c.speed_bl_s), ("agents", 60.0, 1.0, (1.0, 4.0)))
         self.assertIsNone(self.load({}).grid_step)
         self.assertEqual(self.load({"grid": 25, "body_length": 6}).grid_step, 25.0)
 

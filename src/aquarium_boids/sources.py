@@ -7,6 +7,7 @@ ReplaySource moves the same Boid objects along recorded trajectories (--replay F
 from __future__ import annotations
 
 import bisect
+import math
 import zlib
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from .config import BOID_COUNT, CONTROL_PORT, HEIGHT, OSC_HOST, OSC_PORT, PLAIN_
 from .controls import RuntimeControls
 from .replay.calibrate import Normaliser, calibrate_descriptors, calibrate_speed_force, percentile, sample_times
 from .replay.events import EventDetector, EventParams
+from .replay.ant_mapping import Ant, AntMapping, FoodPlace, calibrate_ants, scene_step
 from .replay.interp import DataClock, Piece, Trajectories, per_frame
 from .replay.mapping import Person, SceneMapping, Terrain, count_range
 from .replay.loader import data_bounds, fit_to_world, load_trajectories, resolve_format, smooth_dataset, to_world
@@ -182,6 +184,10 @@ class ReplaySource:
       body length, flip, grid step and places (nest, food items, maze edges) of a dataset that is
       not ETH/UCY pedestrians. Display only for now: the sound is the same as without it.
       Without a config everything above is unchanged.
+    - Profile scene with a scene config: the ant mapping (replay/ant_mapping.py) instead of the
+      pedestrian one, calibrated at load over the file (count, distance from the nest, nest outflow,
+      encounters); positions in body lengths; food discoveries and recruitment waves flash on their
+      place (place_marks), and event flashes last EVENT_FLASH_S of playback time, not data time.
     """
 
     def __init__(
@@ -248,7 +254,9 @@ class ReplaySource:
         self.profile = profile
         self.world = world
         self.mapping = None
-        if profile == "scene":
+        if profile == "scene" and config is not None:
+            self.mapping = self._ant_mapping(config, terrain, dataset.max_population)
+        elif profile == "scene":
             counts = [min(len(self.trajectories.active(t)), max_agents) for t in sample_times(self.trajectories, 0.1)]
             self.count_p5_p95 = (percentile(counts, 0.05), percentile(counts, 0.95)) if counts else (1.0, 15.0)
             self.mapping = SceneMapping(max_count=max(1, min(dataset.max_population, max_agents)), terrain=terrain,
@@ -259,7 +267,7 @@ class ReplaySource:
         b = data_bounds(dataset)
         x0, y0 = transform.apply(b.xmin, b.ymin)
         x1, y1 = transform.apply(b.xmax, b.ymax)
-        edge = EDGE_M * transform.scale
+        edge = 0.0 if config is not None else EDGE_M * transform.scale  # ants: the whole arena counts
         self._inner = (min(x0, x1) + edge, min(y0, y1) + edge, max(x0, x1) - edge, max(y0, y1) - edge)
         self.agents: list[Boid] = []
         self._pieces: list[Piece] = []  # parallel to agents
@@ -366,17 +374,71 @@ class ReplaySource:
 
     def _pan_visible(self, b: Boid) -> tuple[float, bool]:
         """(pan 0..1 left -> right in the displayed picture, clearly visible)."""
+        return self._pan_point(b.position.x, b.position.y)
+
+    def _pan_point(self, wx: float, wy: float) -> tuple[float, bool]:
+        """(pan, clearly visible) of a world point (px)."""
         if self._pan_camera is not None:
             w, h = self._pan_size
-            px = self._pan_camera.project(*self.transform.to_data(b.position.x, b.position.y))
+            px = self._pan_camera.project(*self.transform.to_data(wx, wy))
             if px is None:
                 return 0.5, False
             col, row = px
             visible = EDGE_PX <= col <= w - EDGE_PX and EDGE_PX <= row <= h - EDGE_PX
             return max(0.0, min(1.0, col / w)), visible
         x0, y0, x1, y1 = self._inner
-        visible = x0 <= b.position.x <= x1 and y0 <= b.position.y <= y1
-        return max(0.0, min(1.0, b.position.x / self.world[0])), visible
+        visible = x0 <= wx <= x1 and y0 <= wy <= y1
+        return max(0.0, min(1.0, wx / self.world[0])), visible
+
+    def _ant_mapping(self, config: SceneConfig, terrain: Terrain | None, max_population: int) -> AntMapping:
+        """The ant mapping, calibrated over the file with the replay's own scene checks."""
+        tr, bl = self.transform, config.body_length or 1.0
+        nest = config.nest
+        nest_bl = (nest.x / bl, nest.y / bl) if nest is not None else None
+        self._from_nest: set[tuple[str, int]] = set()  # pieces that start inside the nest radius
+        starts = []
+        if nest is not None:
+            for p in self.trajectories.pieces:
+                x, y = tr.to_data(p.x[0], p.y[0])
+                if math.hypot(x - nest.x, y - nest.y) <= nest.r:
+                    self._from_nest.add((p.track_id, p.index))
+                    starts.append(p.t0)
+        step = scene_step(self.trajectories.t_end - self.trajectories.t_start)
+
+        def frames():
+            for t in sample_times(self.trajectories, step):
+                out = []
+                for p in self.trajectories.active(t)[:self.max_agents]:
+                    st = p.state(t)
+                    x, y = tr.to_data(st.x, st.y)
+                    out.append((f"{p.track_id}#{p.index}", x / bl, y / bl))
+                yield t, out
+
+        calibration = calibrate_ants(frames(), step, nest_bl, starts, config.encounter_bl)
+        self.count_p5_p95 = calibration.count_range
+        food = tuple(FoodPlace(f.t, *tr.apply(f.x, f.y), f.patch) for f in config.food if f.t is not None)
+        return AntMapping(config=config, calibration=calibration,
+                          max_count=max(1, min(max_population, self.max_agents)), speed=self.speed,
+                          terrain=terrain, nest_bl=nest_bl, food=food,
+                          nest_world=self.nest_world[:2] if self.nest_world is not None else None)
+
+    def _map_ants(self, t: float, dt: float) -> None:
+        """Profile scene with an ant config: who is on screen in body lengths and BL/s."""
+        tr, bl = self.transform, self.body_length or 1.0
+        k = 60.0 / self.speed / tr.scale / bl  # px per frame -> BL/s
+        ants = []
+        for b, piece in zip(self.agents, self._pieces):
+            pan, visible = self._pan_visible(b)
+            x, y = tr.to_data(b.position.x, b.position.y)
+            ants.append(Ant(f"{piece.track_id}#{piece.index}", x / bl, y / bl, b.velocity.x * k, b.velocity.y * k,
+                            pan, b.position.x, b.position.y, visible,
+                            (piece.track_id, piece.index) in self._from_nest))
+        self._pans = [a.pan for a in ants]
+        n = len(self.agents)
+        p95_accel = self.calibration.max_force * 6.0
+        agitation = min(1.0, sum(b.acceleration.length() for b in self.agents) / n / p95_accel) \
+            if n and p95_accel > 0 else 0.0
+        self.mapping.update(t, dt, ants, agitation, pan_of=lambda wx, wy: self._pan_point(wx, wy)[0])
 
     def _map(self, t: float) -> None:
         """Profile scene: feed who is on screen (metres, m/s) to the mapping, in data time."""
@@ -384,6 +446,9 @@ class ReplaySource:
             return
         dt = 0.0 if self._map_t is None else max(0.0, t - self._map_t)
         self._map_t = t
+        if isinstance(self.mapping, AntMapping):
+            self._map_ants(t, dt)
+            return
         scale = self.transform.scale  # world px per metre
         to_ms = 60.0 / self.speed / scale
         people = []
@@ -429,11 +494,28 @@ class ReplaySource:
         by_key = {f"{p.track_id}#{p.index}": b for b, p in zip(self.agents, self._pieces)}
         out = []
         for kind, t, keys in self.mapping.events:
-            age = self.clock.t - t
+            age = self._mark_age(t)
             if 0.0 <= age <= EVENT_FLASH_S:
                 agents = [by_key[k] for k in keys if k in by_key]
                 if agents:
                     out.append((kind, age, agents))
+        return out
+
+    def _mark_age(self, t: float) -> float:
+        """Age of a sent event for its flash: data seconds (pedestrians), playback seconds (ants)."""
+        age = self.clock.t - t
+        return age / self.speed if isinstance(self.mapping, AntMapping) else age
+
+    def place_marks(self) -> list[tuple[str, float, tuple[float, float]]]:
+        """Ant profile: (kind, age, world xy) of food discoveries and recruitment waves in the last
+        EVENT_FLASH_S, flashed on their place."""
+        if not isinstance(self.mapping, AntMapping):
+            return []
+        out = []
+        for kind, t, xy in self.mapping.place_events:
+            age = self._mark_age(t)
+            if 0.0 <= age <= EVENT_FLASH_S:
+                out.append((kind, age, xy))
         return out
 
     def take_pad_samples(self) -> list[int]:
@@ -525,6 +607,8 @@ class ReplaySource:
         m = self.mapping
         if m is None:
             return []
+        if isinstance(m, AntMapping):
+            return m.hud_lines()
         db = 70.0 * (m.master - 1.0)
         lo, hi = m.count_range
         return [f"sound scene | count {m.count01:.2f} ({m.count} people, file {lo:.0f}-{hi:.0f}) | speed "

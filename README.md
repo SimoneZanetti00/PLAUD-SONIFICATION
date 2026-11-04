@@ -202,7 +202,7 @@ tests/                  offline tests: python -m unittest discover -s tests
 |---|---|
 | [docs/SYSTEM.md](docs/SYSTEM.md) | how the whole system works: pipeline, scene quantities, both sound profiles as mapping tables, the terrain map, events, the Max patches, limits |
 | [docs/REPLAY.md](docs/REPLAY.md) | data sources and citations, getting the files, every replay option, views, calibration, events, known limits |
-| [docs/ANTS.md](docs/ANTS.md) | experimental: ant datasets (ANTS, Liquid Brains), converters, the scene config, maze / nest / food and pixel image / video views |
+| [docs/ANTS.md](docs/ANTS.md) | experimental: ant datasets (ANTS, Liquid Brains), converters, the scene config, maze / nest / food and pixel image / video views, the ant sound mapping (food, recruitment waves, activity, nest distance, encounters) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | modules, the frame loop, simulation vs replay source, descriptors, how they reach the sound |
 | [docs/OSC.md](docs/OSC.md) | every OSC address with its range, replay-mode differences, the control input on UDP 7500 |
 | [docs/CONTROLS.md](docs/CONTROLS.md) | keyboard, mouse, command line, replay mode, MPK mini 3, MIDIMIX |

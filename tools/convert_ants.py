@@ -197,7 +197,7 @@ def convert_ants(seq_dir: Path, out_dir: Path, video: bool) -> None:
         "body_length": box, "body_length_is_estimate": True,
         "comment": "pixel coordinates of the image (y down); body length = the annotation box size, an estimate",
         "smooth_s": 0.2, "path_s": 2,
-        "thresholds": {"standing_bl_s": 0.3, "speed_bl_s": [0.5, 5.0], "close_bl": [0.5, 3.0]},
+        "thresholds": {"standing_bl_s": 1.0, "speed_bl_s": [1.0, 4.0], "close_bl": [0.5, 3.0], "encounter_bl": 1.0},
         "events": EVENTS_ANTS,
         "image_credit": "ANTS frame (Wu et al. 2022)", "video_credit": "ANTS video (Wu et al. 2022)",
     }
@@ -235,9 +235,9 @@ def convert_liquid(trial: Path, hex_csv: Path, out_dir: Path, food_csv: Path | N
         "body_length": LB_BODY_LENGTH_MM, "body_length_is_estimate": True,
         "comment": "Aphaenogaster senilis in a Y-maze; body length 6 mm is an estimate; y flipped so the nest is at the bottom as in the paper",
         "flip_y": True, "grid": 50,
-        "thresholds": {"standing_bl_s": 0.3, "speed_bl_s": [0.5, 5.0], "close_bl": [0.5, 3.0]},
+        "thresholds": {"standing_bl_s": 1.0, "speed_bl_s": [1.0, 4.0], "close_bl": [0.5, 3.0], "encounter_bl": 1.0},
         "places_file": f"{name}.places.json",
-        "places": {"nest": {"r": 60}},
+        "places": {"nest": {"r": 130}},  # tracking starts ~80-120 mm above node 634: ants first appear there
         "events": {"arrivals": "nest", "together": False, "food_discovery": food, "recruitment": True,
                    "encounters": True},
     }
